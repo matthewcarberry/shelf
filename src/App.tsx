@@ -13,6 +13,7 @@ import {
   CircleUserRound,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Check,
   Columns2,
   Contrast,
@@ -192,6 +193,7 @@ type LibrarySortMode = "recent" | "title" | "author" | "progress";
 const LIBRARY_SORT_MODES = new Set<LibrarySortMode>(["recent", "title", "author", "progress"]);
 const LIBRARY_LAYOUT_MODES = new Set<LibraryLayoutMode>(["grid", "list", "compact"]);
 type LibraryViewType = "ebooks" | "audiobooks";
+type ListeningSession = { bookId: string; reader: ReaderInfo; progress: ProgressState | null };
 type MainView = "home" | LibraryViewType | "profile" | "marks" | "add";
 type ReaderPanel = "toc" | "search" | "display" | "marks" | null;
 
@@ -289,6 +291,8 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(() => !getIsCompactLayout());
   const [activeView, setActiveView] = useState<MainView>("home");
   const [readerOpen, setReaderOpen] = useState(false);
+  const [listening, setListening] = useState<ListeningSession | null>(null);
+  const [playerExpanded, setPlayerExpanded] = useState(false);
   const [usersOpen, setUsersOpen] = useState(false);
   const [serverSettingsOpen, setServerSettingsOpen] = useState(false);
   const [serverAccessOpen, setServerAccessOpen] = useState(false);
@@ -309,6 +313,9 @@ export function App() {
   const [message, setMessage] = useState("");
   const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null);
   const progressTimerRef = useRef<number | null>(null);
+  const listeningProgressTimerRef = useRef<number | null>(null);
+  const listeningProgressRef = useRef<ProgressState | null>(null);
+  const listeningPendingSaveRef = useRef<{ bookId: string; progress: ProgressState } | null>(null);
   const preferencesTimerRef = useRef<number | null>(null);
   const lookupTokenRef = useRef(0);
   const activityPercentRef = useRef(0);
@@ -328,7 +335,16 @@ export function App() {
   const hasCurrentServerAccess = Boolean(activeServer);
   const canManageServer = activeServer?.role === "owner" || activeServer?.role === "admin";
 
-  activityPercentRef.current = currentProgress?.percent || activeBook?.progress?.percent || 0;
+  const listeningBook = useMemo(
+    () => listening ? books.find((book) => book.id === listening.bookId) || listening.reader.book : null,
+    [books, listening]
+  );
+  // The ebook reader takes priority for activity; otherwise report the audiobook that is playing.
+  const activityBookId = readerOpen ? activeBookId : listening?.bookId || null;
+
+  activityPercentRef.current = activityBookId && activityBookId === listening?.bookId && !readerOpen
+    ? listeningProgressRef.current?.percent || listeningBook?.progress?.percent || 0
+    : currentProgress?.percent || activeBook?.progress?.percent || 0;
 
   const filteredBooks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -416,6 +432,43 @@ export function App() {
     [handleError]
   );
 
+  const handleListen = useCallback(
+    async (bookId: string) => {
+      if (listening?.bookId === bookId) {
+        setPlayerExpanded(true);
+        return;
+      }
+
+      setBusy(true);
+      setMessage("");
+      try {
+        const info = await getReaderInfo(bookId);
+        const resolvedProgress = info.progress || info.book.progress || null;
+        setActiveBookId(bookId);
+        setReader(info);
+        setReaderOpen(false);
+        setCurrentProgress(resolvedProgress);
+        setBooks((items) => items.map((book) =>
+          book.id === bookId ? { ...book, progress: resolvedProgress } : book
+        ));
+        listeningProgressRef.current = resolvedProgress;
+        setListening({ bookId, reader: info, progress: resolvedProgress });
+        setPlayerExpanded(true);
+      } catch (error) {
+        handleError(error, "Unable to open title");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [handleError, listening?.bookId]
+  );
+
+  const handleStopListening = useCallback(() => {
+    setListening(null);
+    setPlayerExpanded(false);
+    listeningProgressRef.current = null;
+  }, []);
+
   useEffect(() => {
     getAuthStatus()
       .then(setAuth)
@@ -490,13 +543,13 @@ export function App() {
   }, [activeBook, openBook, refreshBooks]);
 
   useEffect(() => {
-    if (!readerOpen || !activeBookId || !auth?.user) {
+    if (!activityBookId || !auth?.user) {
       return;
     }
 
     const heartbeat = () => {
       if (document.visibilityState === "visible") {
-        void updateReadingActivity(activeBookId, activityPercentRef.current).catch(() => undefined);
+        void updateReadingActivity(activityBookId, activityPercentRef.current).catch(() => undefined);
       }
     };
     const handleVisibility = () => {
@@ -515,7 +568,7 @@ export function App() {
       document.removeEventListener("visibilitychange", handleVisibility);
       void clearReadingActivity(true).catch(() => undefined);
     };
-  }, [activeBookId, auth?.user, readerOpen]);
+  }, [activityBookId, auth?.user]);
 
   const refreshActivity = useCallback(async () => {
     if (auth?.user?.role !== "admin") {
@@ -552,6 +605,9 @@ export function App() {
       if (progressTimerRef.current) {
         window.clearTimeout(progressTimerRef.current);
       }
+      if (listeningProgressTimerRef.current) {
+        window.clearTimeout(listeningProgressTimerRef.current);
+      }
       if (preferencesTimerRef.current) {
         window.clearTimeout(preferencesTimerRef.current);
       }
@@ -580,6 +636,41 @@ export function App() {
       }, 450);
     },
     [activeBookId, handleError]
+  );
+
+  const listeningBookId = listening?.bookId || null;
+
+  const handleListeningProgress = useCallback(
+    (progress: ProgressState) => {
+      if (!listeningBookId) {
+        return;
+      }
+
+      listeningProgressRef.current = progress;
+      setBooks((items) =>
+        items.map((book) => (book.id === listeningBookId ? { ...book, progress } : book))
+      );
+
+      if (listeningProgressTimerRef.current) {
+        window.clearTimeout(listeningProgressTimerRef.current);
+        listeningProgressTimerRef.current = null;
+      }
+      const pending = listeningPendingSaveRef.current;
+      if (pending && pending.bookId !== listeningBookId) {
+        // A different audiobook was playing a moment ago; save its last position now.
+        void saveProgress(pending.bookId, pending.progress).catch(() => undefined);
+      }
+
+      listeningPendingSaveRef.current = { bookId: listeningBookId, progress };
+      listeningProgressTimerRef.current = window.setTimeout(() => {
+        listeningProgressTimerRef.current = null;
+        listeningPendingSaveRef.current = null;
+        void saveProgress(listeningBookId, progress).catch((error) =>
+          handleError(error, "Unable to save progress")
+        );
+      }, 450);
+    },
+    [handleError, listeningBookId]
   );
 
   const applyBookProgress = useCallback(
@@ -708,6 +799,50 @@ export function App() {
     setDictionaryLoading(false);
   }, []);
 
+  const updateBookmarksFor = useCallback((bookId: string, update: (bookmarks: Bookmark[]) => Bookmark[]) => {
+    setReader((info) => (info?.book.id === bookId ? { ...info, bookmarks: update(info.bookmarks) } : info));
+    setListening((session) =>
+      session?.bookId === bookId
+        ? { ...session, reader: { ...session.reader, bookmarks: update(session.reader.bookmarks) } }
+        : session
+    );
+  }, []);
+
+  const handleListeningBookmark = async () => {
+    const bookId = listening?.bookId;
+    const progress = listeningProgressRef.current || listening?.progress;
+    if (!bookId || !progress) {
+      return;
+    }
+
+    try {
+      const bookmark = await addBookmark(bookId, {
+        label: `${formatPercent(progress.percent)} listened`,
+        locator: progress.locator,
+        page: progress.page,
+        percent: progress.percent
+      });
+      await saveProgress(bookId, progress);
+      updateBookmarksFor(bookId, (bookmarks) => [bookmark, ...bookmarks]);
+    } catch (error) {
+      handleError(error, "Unable to save bookmark");
+    }
+  };
+
+  const handleDeleteListeningBookmark = async (bookmark: Bookmark) => {
+    const bookId = listening?.bookId;
+    if (!bookId) {
+      return;
+    }
+    try {
+      await deleteBookmark(bookId, bookmark.id);
+      updateBookmarksFor(bookId, (bookmarks) => bookmarks.filter((item) => item.id !== bookmark.id));
+      void refreshProfile().catch(() => undefined);
+    } catch (error) {
+      handleError(error, "Unable to delete bookmark");
+    }
+  };
+
   const handleBookmark = async () => {
     if (!activeBookId || !currentProgress) {
       return;
@@ -726,9 +861,7 @@ export function App() {
         percent: currentProgress.percent
       });
       await saveProgress(activeBookId, currentProgress);
-      setReader((info) =>
-        info ? { ...info, bookmarks: [bookmark, ...info.bookmarks] } : info
-      );
+      updateBookmarksFor(activeBookId, (bookmarks) => [bookmark, ...bookmarks]);
     } catch (error) {
       handleError(error, "Unable to save bookmark");
     }
@@ -762,11 +895,7 @@ export function App() {
     }
     try {
       await deleteBookmark(activeBookId, bookmark.id);
-      setReader((info) =>
-        info
-          ? { ...info, bookmarks: info.bookmarks.filter((item) => item.id !== bookmark.id) }
-          : info
-      );
+      updateBookmarksFor(activeBookId, (bookmarks) => bookmarks.filter((item) => item.id !== bookmark.id));
       void refreshProfile().catch(() => undefined);
     } catch (error) {
       handleError(error, "Unable to delete bookmark");
@@ -791,6 +920,10 @@ export function App() {
   };
 
   const handleJump = (target: { locator?: string | null; page?: number | null }) => {
+    if (activeBook?.mediaType === "audiobook") {
+      void handleListen(activeBook.id);
+      return;
+    }
     setActiveView(viewForMediaType(activeBook?.mediaType || "ebook"));
     setReaderOpen(true);
     setJumpTarget({ ...target, stamp: Date.now() });
@@ -838,11 +971,15 @@ export function App() {
         setSidebarOpen(false);
       }
       const selectedBook = books.find((book) => book.id === bookId);
+      if (selectedBook?.mediaType === "audiobook") {
+        void handleListen(bookId);
+        return;
+      }
       setActiveView(viewForMediaType(selectedBook?.mediaType || "ebook"));
       setReaderOpen(true);
       void openBook(bookId);
     },
-    [books, isCompactLayout, openBook]
+    [books, handleListen, isCompactLayout, openBook]
   );
 
   const handleOpenProfileMark = useCallback(
@@ -850,12 +987,16 @@ export function App() {
       if (isCompactLayout) {
         setSidebarOpen(false);
       }
+      if (book.mediaType === "audiobook") {
+        await handleListen(book.id);
+        return;
+      }
       setActiveView(viewForMediaType(book.mediaType));
       setReaderOpen(true);
       await openBook(book.id);
       setJumpTarget({ locator: highlight.locator, page: highlight.page, stamp: Date.now() });
     },
-    [isCompactLayout, openBook]
+    [handleListen, isCompactLayout, openBook]
   );
 
   const handleToggleReadList = useCallback(
@@ -974,12 +1115,22 @@ export function App() {
       window.clearTimeout(progressTimerRef.current);
       progressTimerRef.current = null;
     }
+    if (book.id === listening?.bookId) {
+      handleStopListening();
+    }
 
     setBusy(true);
     setMessage("");
     try {
       await deleteBook(book.id);
       setBooks((items) => items.filter((item) => item.id !== book.id));
+      if (book.id === listeningPendingSaveRef.current?.bookId) {
+        if (listeningProgressTimerRef.current) {
+          window.clearTimeout(listeningProgressTimerRef.current);
+          listeningProgressTimerRef.current = null;
+        }
+        listeningPendingSaveRef.current = null;
+      }
       if (book.id === activeBookId) {
         setActiveBookId(null);
         setReader(null);
@@ -1099,6 +1250,7 @@ export function App() {
         current ? { ...current, authenticated: false, user: null } : { enabled: true, authenticated: false, user: null }
       );
       setBooks([]);
+      handleStopListening();
       setActiveBookId(null);
       setReader(null);
       setCurrentProgress(null);
@@ -1192,7 +1344,9 @@ export function App() {
   const activeViewCountLabel = activeView === "profile"
     ? (activeViewCount === 1 ? "completed" : "completed")
     : (activeViewCount === 1 ? "title" : "titles");
-  const isReaderFocused = activeLibraryType !== null && readerOpen;
+  const isPlayerExpanded = Boolean(listening) && playerExpanded;
+  const isReaderFocused = (activeLibraryType !== null && readerOpen) || isPlayerExpanded;
+  const hasMiniPlayer = Boolean(listening) && !isPlayerExpanded;
 
   return (
     <div className={`app-shell theme-${preferences.theme} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"} ${isReaderFocused ? "reader-focus" : ""}`}>
@@ -1317,7 +1471,7 @@ export function App() {
         />
       ) : null}
 
-      <main className={`reader-stage ${isReaderFocused ? "is-reader-focused" : ""}`}>
+      <main className={`reader-stage ${isReaderFocused ? "is-reader-focused" : ""} ${hasMiniPlayer ? "has-mini-player" : ""}`}>
         {!isReaderFocused ? (
           <div className="top-strip">
             <button
@@ -1363,6 +1517,7 @@ export function App() {
 
         {message ? <div className="message-bar">{message}</div> : null}
 
+        {!isPlayerExpanded ? (<>
         {!hasCurrentServerAccess && platformOverview ? (
           <ServerOnboarding
             accountName={platformOverview.account.displayName}
@@ -1489,6 +1644,28 @@ export function App() {
 
         {hasCurrentServerAccess && canManageServer && activeView === "add" ? (
           <AddBookView busy={busy} onUpload={(files) => void handleUploadBooks(files)} />
+        ) : null}
+        </>) : null}
+
+        {listening && listeningBook ? (
+          // Stays mounted while minimized so playback continues as you browse.
+          <div className={isPlayerExpanded ? "library-workspace is-reading" : "audiobook-mini-dock"}>
+            <AudiobookPlayer
+              key={listening.bookId}
+              book={listeningBook}
+              tracks={listening.reader.audioTracks}
+              progress={listening.progress}
+              bookmarks={listening.reader.bookmarks}
+              minimized={!isPlayerExpanded}
+              onProgress={handleListeningProgress}
+              onBookmark={() => void handleListeningBookmark()}
+              onDeleteBookmark={(bookmark) => void handleDeleteListeningBookmark(bookmark)}
+              onMinimize={() => setPlayerExpanded(false)}
+              onExpand={() => setPlayerExpanded(true)}
+              onClose={handleStopListening}
+              onUsage={(mediaType, seconds) => void handleProfileUsage(mediaType, seconds)}
+            />
+          </div>
         ) : null}
       </main>
 
@@ -4477,19 +4654,15 @@ function ReaderWorkspace({
   }
 
   if (reader.format === "audio") {
+    // Audiobooks play in the app-level player so they keep going while you browse.
     return (
-      <AudiobookPlayer
-        key={activeBook.id}
-        book={activeBook}
-        tracks={reader.audioTracks}
-        progress={progress}
-        bookmarks={reader.bookmarks}
-        onProgress={onProgress}
-        onBookmark={onBookmark}
-        onDeleteBookmark={onDeleteBookmark}
-        onClose={onCloseReader}
-        onUsage={onUsage}
-      />
+      <section className="prepare-state">
+        <div>
+          <h2>{activeBook.title}</h2>
+          <p>This audiobook plays in the Shelf player.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={onCloseReader}>Back to library</button>
+      </section>
     );
   }
 
@@ -4597,9 +4770,12 @@ function AudiobookPlayer({
   tracks,
   progress,
   bookmarks,
+  minimized,
   onProgress,
   onBookmark,
   onDeleteBookmark,
+  onMinimize,
+  onExpand,
   onClose,
   onUsage
 }: {
@@ -4607,9 +4783,12 @@ function AudiobookPlayer({
   tracks: ReaderInfo["audioTracks"];
   progress: ProgressState | null;
   bookmarks: ReaderInfo["bookmarks"];
+  minimized: boolean;
   onProgress: (progress: ProgressState) => void;
   onBookmark: () => void;
   onDeleteBookmark: (bookmark: Bookmark) => void;
+  onMinimize: () => void;
+  onExpand: () => void;
   onClose: () => void;
   onUsage: (mediaType: MediaType, seconds: number) => void;
 }) {
@@ -4881,271 +5060,7 @@ function AudiobookPlayer({
     }
   };
 
-  return (
-    <section className="audiobook-player-shell audiobook-pocket-shell audiobook-desktop-shell">
-      <header className="audiobook-pocket-header">
-        <button type="button" className="audiobook-pocket-close" aria-label="Return to library" onClick={() => {
-          emitProgress();
-          onClose();
-        }}>
-          <span className="audiobook-mobile-close"><ChevronDown size={25} /></span>
-          <span className="audiobook-desktop-brand"><i><BookOpen size={24} /></i><strong>Shelf</strong></span>
-        </button>
-        <nav className="audiobook-pocket-tabs" aria-label="Audiobook player sections">
-          {(["playing", "details", "bookmarks"] as const).map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              className={activeTab === tab ? "is-active" : ""}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab[0].toUpperCase() + tab.slice(1)}
-            </button>
-          ))}
-        </nav>
-        <button
-          type="button"
-          className={`audiobook-pocket-queue ${chaptersOpen ? "is-active" : ""}`}
-          aria-label={`${tracks.length} chapters`}
-          onClick={() => setChaptersOpen((value) => !value)}
-        >
-          <strong>{tracks.length}</strong>
-          <ListMusic size={22} />
-        </button>
-        <div className="audiobook-desktop-header-tools">
-          <button type="button" title={offlineStored ? "Available offline" : "Make available offline"} className={offlineStored ? "is-active" : ""} disabled={!canStoreOffline || offlineBusy} onClick={() => void toggleOfflineMode()}>
-            {offlineBusy ? <Loader2 className="spin" size={21} /> : offlineStored ? <WifiOff size={21} /> : <Download size={21} />}
-          </button>
-          <button type="button" title="Add bookmark" onClick={onBookmark}><BookmarkIcon size={22} /></button>
-          <button type="button" title="Share audiobook" onClick={() => void shareAudiobook()}><Share2 size={23} /></button>
-        </div>
-      </header>
-
-      {offlineMessage ? (
-        <div className={`audiobook-offline-message ${offlineStored ? "is-ready" : ""}`} role="status">
-          {offlineMessage}
-          {offlineBusy && offlineDownload.total > 0 ? (
-            <span aria-hidden="true"><i style={{ width: `${Math.round((offlineDownload.completed / offlineDownload.total) * 100)}%` }} /></span>
-          ) : null}
-        </div>
-      ) : null}
-
-      {activeTab === "playing" ? (
-      <div className="audiobook-stage audiobook-pocket-playing">
-        <div className="audiobook-art"><BookCover book={book} /></div>
-        <div className="audiobook-copy">
-          <h2>{book.title}</h2>
-          <p>{tracks.length > 1 ? track.title : book.author || "Unknown author"}</p>
-          <small className="audiobook-desktop-progress">Listened to {formatAudioListened(elapsed)} ({formatPercent(percent)})</small>
-          <small className="audiobook-mobile-progress">
-            {totalDuration > 0
-              ? `${formatAudioRemaining(Math.max(0, totalDuration - elapsed), playbackRate)} left at ${formatPlaybackRate(playbackRate)}× · ${formatPercent(percent)}`
-              : `${book.author || "Unknown author"} · ${formatPercent(percent)}`}
-          </small>
-        </div>
-
-        <div className="audiobook-transport">
-          <input
-            className="audiobook-seek"
-            type="range"
-            min="0"
-            max="1000"
-            value={Math.round(percent * 1000)}
-            aria-label="Audiobook position"
-            onChange={(event) => seekToPercent(Number(event.target.value) / 1000)}
-          />
-          <div className="audiobook-time-row">
-            <span>{formatAudioTime(elapsed)}</span>
-            <span className="audiobook-mobile-time-remaining">{totalDuration > 0 ? `-${formatAudioTime(Math.max(0, totalDuration - elapsed))}` : formatPercent(percent)}</span>
-            <span className="audiobook-desktop-time-remaining">{totalDuration > 0 ? formatAudioTime(Math.max(0, totalDuration - elapsed)) : formatPercent(percent)}</span>
-          </div>
-          <div className="audiobook-buttons">
-            <button
-              type="button"
-              className="audiobook-track-button"
-              title="Previous track"
-              aria-label="Previous track"
-              disabled={trackIndex === 0}
-              onClick={() => selectTrack(trackIndex - 1, 0, playing)}
-            >
-              <SkipBack size={34} strokeWidth={1.9} />
-            </button>
-            <button
-              type="button"
-              className="audiobook-skip-button"
-              title="Back 15 seconds"
-              aria-label="Back 15 seconds"
-              onClick={() => seekRelative(-15)}
-            >
-              <span className="audiobook-skip-icon" aria-hidden="true">
-                <RotateCcw size={26} />
-                <span className="audiobook-skip-seconds">15</span>
-              </span>
-              <small className="audiobook-desktop-jump-label">−15</small>
-            </button>
-            <button
-              type="button"
-              className="audiobook-play-button"
-              title={playing ? "Pause" : "Play"}
-              onClick={() => {
-                if (playing) {
-                  audioRef.current?.pause();
-                } else {
-                  void audioRef.current?.play();
-                }
-              }}
-            >
-              {playing ? <Pause size={31} fill="currentColor" /> : <Play size={31} fill="currentColor" />}
-            </button>
-            <button
-              type="button"
-              className="audiobook-skip-button"
-              title="Forward 15 seconds"
-              aria-label="Forward 15 seconds"
-              onClick={() => seekRelative(15)}
-            >
-              <span className="audiobook-skip-icon" aria-hidden="true">
-                <RotateCw size={26} />
-                <span className="audiobook-skip-seconds">15</span>
-              </span>
-              <small className="audiobook-desktop-jump-label">+15</small>
-            </button>
-            <button
-              type="button"
-              className="audiobook-track-button"
-              title="Next track"
-              aria-label="Next track"
-              disabled={trackIndex === tracks.length - 1}
-              onClick={() => selectTrack(trackIndex + 1, 0, playing)}
-            >
-              <SkipForward size={34} strokeWidth={1.9} />
-            </button>
-          </div>
-          <div className="audiobook-desktop-tools" aria-label="Audiobook playback tools">
-            <button type="button" className={speedOpen ? "is-active" : ""} onClick={() => setSpeedOpen((value) => !value)}>
-              <Gauge size={27} /><span>Speed ({formatPlaybackRate(playbackRate)}×)</span>
-            </button>
-            <button type="button" className={chaptersOpen ? "is-active" : ""} onClick={() => setChaptersOpen((value) => !value)}>
-              <ListMusic size={28} /><span>Tracks</span>
-            </button>
-            <label className="audiobook-desktop-volume">
-              <Volume2 size={25} />
-              <input type="range" min="0" max="1" step="0.05" value={volume} aria-label="Volume" onChange={(event) => setVolume(Number(event.target.value))} />
-            </label>
-          </div>
-          {speedOpen ? <div className="audiobook-options audiobook-pocket-speed-panel">
-            <label className="audiobook-speed">
-              <span>Speed</span>
-              <input
-                type="range"
-                min="0.5"
-                max="3"
-                step="0.05"
-                value={playbackRate}
-                aria-label="Playback speed"
-                onChange={(event) => setPlaybackRate(Number(event.target.value))}
-              />
-              <strong>{formatPlaybackRate(playbackRate)}×</strong>
-            </label>
-            <label className="audiobook-volume">
-              <Volume2 size={17} />
-              <input type="range" min="0" max="1" step="0.05" value={volume} aria-label="Volume" onChange={(event) => setVolume(Number(event.target.value))} />
-            </label>
-          </div> : null}
-        </div>
-
-        {tracks.length > 1 ? (
-          <aside className="audiobook-chapters">
-            <h3>Parts</h3>
-            <div>
-              {tracks.map((item, index) => (
-                <button key={`${item.index}-${item.filename}`} type="button" className={index === trackIndex ? "is-active" : ""} onClick={() => selectTrack(index, 0, playing)}>
-                  <span>{index + 1}</span>
-                  <strong>{item.title}</strong>
-                  <small>{item.durationSeconds ? formatAudioTime(item.durationSeconds) : ""}</small>
-                </button>
-              ))}
-            </div>
-          </aside>
-        ) : null}
-      </div>
-      ) : null}
-
-      {activeTab === "details" ? (
-        <section className="audiobook-pocket-panel audiobook-pocket-details">
-          <div className="audiobook-pocket-detail-cover"><BookCover book={book} /></div>
-          <div className="audiobook-pocket-detail-copy">
-            <span>Audiobook</span>
-            <h2>{book.title}</h2>
-            {book.subtitle ? <h3>{book.subtitle}</h3> : null}
-            <p className="audiobook-pocket-byline">
-              {book.author || "Unknown author"}{book.narrator ? ` · Narrated by ${book.narrator}` : ""}
-            </p>
-            <p>{book.description || "No description is available for this audiobook."}</p>
-            <dl>
-              <div><dt>Chapters</dt><dd>{tracks.length}</dd></div>
-              <div><dt>Length</dt><dd>{totalDuration ? formatAudioTime(totalDuration) : "Unknown"}</dd></div>
-              <div><dt>Progress</dt><dd>{formatPercent(percent)}</dd></div>
-            </dl>
-            <div className="audiobook-pocket-detail-controls">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={offlineStored}
-                className={`offline-mode-toggle ${offlineStored ? "is-active" : ""}`}
-                disabled={!canStoreOffline || offlineBusy}
-                onClick={() => void toggleOfflineMode()}
-              >
-                {offlineBusy ? <Loader2 className="spin" size={16} /> : offlineStored ? <WifiOff size={16} /> : <Download size={16} />}
-                <span>{offlineBusy ? `Saving ${offlineDownload.completed}/${offlineDownload.total}` : offlineStored ? "Offline ready" : "Make available offline"}</span>
-                <i aria-hidden="true"><b /></i>
-              </button>
-              <label className="audiobook-volume">
-                <Volume2 size={17} />
-                <input type="range" min="0" max="1" step="0.05" value={volume} aria-label="Volume" onChange={(event) => setVolume(Number(event.target.value))} />
-              </label>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {activeTab === "bookmarks" ? (
-        <section className="audiobook-pocket-panel audiobook-pocket-bookmarks">
-          <div className="audiobook-pocket-panel-heading">
-            <div><span>Saved places</span><h2>Bookmarks</h2></div>
-            <button type="button" onClick={onBookmark}><BookmarkIcon size={18} /> Add current position</button>
-          </div>
-          {bookmarks.length ? bookmarks.map((bookmark) => (
-            <article key={bookmark.id}>
-              <BookmarkIcon size={18} />
-              <div><strong>{bookmark.label || `Bookmark at ${formatPercent(bookmark.percent)}`}</strong><small>{formatPercent(bookmark.percent)} through the audiobook</small></div>
-              <button type="button" aria-label={`Delete ${bookmark.label}`} onClick={() => onDeleteBookmark(bookmark)}><Trash2 size={17} /></button>
-            </article>
-          )) : (
-            <div className="audiobook-pocket-empty"><BookmarkIcon size={32} /><strong>No bookmarks yet</strong><span>Save the current position so it is easy to find later.</span></div>
-          )}
-        </section>
-      ) : null}
-
-      {chaptersOpen ? (
-        <aside className="audiobook-pocket-chapters" aria-label="Audiobook chapters">
-          <header><div><span>{tracks.length} chapters</span><h3>{book.title}</h3></div><button type="button" aria-label="Close chapters" onClick={() => setChaptersOpen(false)}><X size={20} /></button></header>
-          <div>{tracks.map((item, index) => (
-            <button key={`${item.index}-${item.filename}`} type="button" className={index === trackIndex ? "is-active" : ""} onClick={() => { selectTrack(index, 0, playing); setChaptersOpen(false); setActiveTab("playing"); }}>
-              <span>{index + 1}</span><strong>{item.title}</strong><small>{item.durationSeconds ? formatAudioTime(item.durationSeconds) : ""}</small>
-            </button>
-          ))}</div>
-        </aside>
-      ) : null}
-
-      <footer className="audiobook-pocket-tools" aria-label="Audiobook tools">
-        <button type="button" className={speedOpen ? "is-active" : ""} title="Playback speed" onClick={() => { setSpeedOpen((value) => !value); setActiveTab("playing"); }}><strong>{formatPlaybackRate(playbackRate)}×</strong><span>Speed</span></button>
-        <button type="button" title="Offline mode" className={offlineStored ? "is-active" : ""} onClick={() => setActiveTab("details")}><Download size={22} /><span>Offline</span></button>
-        <button type="button" title="Add bookmark" onClick={onBookmark}><BookmarkIcon size={24} /><span>Bookmark</span></button>
-        <button type="button" title="Share audiobook" onClick={() => void shareAudiobook()}><Share2 size={23} /><span>Share</span></button>
-        <button type="button" title="Chapters" className={chaptersOpen ? "is-active" : ""} onClick={() => setChaptersOpen((value) => !value)}><ListMusic size={23} /><span>Chapters</span></button>
-      </footer>
-
+  const audioElement = (
       <audio
         ref={audioRef}
         src={track.fileUrl}
@@ -5208,7 +5123,340 @@ function AudiobookPlayer({
           }
         }}
       />
-    </section>
+  );
+
+  if (minimized) {
+    return (
+      <>
+        <section className="audiobook-mini-player" aria-label="Now playing">
+          <div className="audiobook-mini-progress" aria-hidden="true">
+            <span style={{ width: `${percent * 100}%` }} />
+          </div>
+          <button type="button" className="audiobook-mini-info" title="Open player" aria-label={`Open player for ${book.title}`} onClick={onExpand}>
+            <span className="audiobook-mini-art"><BookCover book={book} fit="contain" /></span>
+            <span className="audiobook-mini-copy">
+              <strong>{book.title}</strong>
+              <small>
+                {book.author || "Unknown author"}
+                {totalDuration > 0 ? ` · ${formatAudioTime(Math.max(0, totalDuration - elapsed))} left` : ""}
+              </small>
+            </span>
+          </button>
+          <div className="audiobook-mini-controls">
+            <button type="button" className="audiobook-mini-skip" title="Back 15 seconds" aria-label="Back 15 seconds" onClick={() => seekRelative(-15)}>
+              <RotateCcw size={20} />
+            </button>
+            <button
+              type="button"
+              className="audiobook-mini-play"
+              title={playing ? "Pause" : "Play"}
+              aria-label={playing ? "Pause" : "Play"}
+              onClick={() => {
+                if (playing) {
+                  audioRef.current?.pause();
+                } else {
+                  void audioRef.current?.play();
+                }
+              }}
+            >
+              {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+            </button>
+            <button type="button" className="audiobook-mini-skip" title="Forward 15 seconds" aria-label="Forward 15 seconds" onClick={() => seekRelative(15)}>
+              <RotateCw size={20} />
+            </button>
+            <button type="button" className="audiobook-mini-expand" title="Open player" aria-label="Open player" onClick={onExpand}>
+              <ChevronUp size={22} />
+            </button>
+            <button
+              type="button"
+              className="audiobook-mini-close"
+              title="Stop and close player"
+              aria-label="Stop and close player"
+              onClick={() => {
+                audioRef.current?.pause();
+                emitProgress();
+                onClose();
+              }}
+            >
+              <X size={20} />
+            </button>
+          </div>
+        </section>
+        {audioElement}
+      </>
+    );
+  }
+
+  // The audio element sits after the player UI in both layouts so React keeps the
+  // same element (and playback) when switching between minimized and full size.
+  return (
+    <>
+      <section className="audiobook-player-shell audiobook-pocket-shell audiobook-desktop-shell">
+        <header className="audiobook-pocket-header">
+          <button type="button" className="audiobook-pocket-close" aria-label="Minimize player" title="Minimize player" onClick={() => {
+            emitProgress();
+            onMinimize();
+          }}>
+            <span className="audiobook-mobile-close"><ChevronDown size={25} /></span>
+            <span className="audiobook-desktop-brand"><i><BookOpen size={24} /></i><strong>Shelf</strong></span>
+          </button>
+          <nav className="audiobook-pocket-tabs" aria-label="Audiobook player sections">
+            {(["playing", "details", "bookmarks"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                className={activeTab === tab ? "is-active" : ""}
+                onClick={() => setActiveTab(tab)}
+              >
+                {tab[0].toUpperCase() + tab.slice(1)}
+              </button>
+            ))}
+          </nav>
+          <button
+            type="button"
+            className={`audiobook-pocket-queue ${chaptersOpen ? "is-active" : ""}`}
+            aria-label={`${tracks.length} chapters`}
+            onClick={() => setChaptersOpen((value) => !value)}
+          >
+            <strong>{tracks.length}</strong>
+            <ListMusic size={22} />
+          </button>
+          <div className="audiobook-desktop-header-tools">
+            <button type="button" title={offlineStored ? "Available offline" : "Make available offline"} className={offlineStored ? "is-active" : ""} disabled={!canStoreOffline || offlineBusy} onClick={() => void toggleOfflineMode()}>
+              {offlineBusy ? <Loader2 className="spin" size={21} /> : offlineStored ? <WifiOff size={21} /> : <Download size={21} />}
+            </button>
+            <button type="button" title="Add bookmark" onClick={onBookmark}><BookmarkIcon size={22} /></button>
+            <button type="button" title="Share audiobook" onClick={() => void shareAudiobook()}><Share2 size={23} /></button>
+          </div>
+        </header>
+
+        {offlineMessage ? (
+          <div className={`audiobook-offline-message ${offlineStored ? "is-ready" : ""}`} role="status">
+            {offlineMessage}
+            {offlineBusy && offlineDownload.total > 0 ? (
+              <span aria-hidden="true"><i style={{ width: `${Math.round((offlineDownload.completed / offlineDownload.total) * 100)}%` }} /></span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {activeTab === "playing" ? (
+        <div className="audiobook-stage audiobook-pocket-playing">
+          <div className="audiobook-art"><BookCover book={book} /></div>
+          <div className="audiobook-copy">
+            <h2>{book.title}</h2>
+            <p>{tracks.length > 1 ? track.title : book.author || "Unknown author"}</p>
+            <small className="audiobook-desktop-progress">Listened to {formatAudioListened(elapsed)} ({formatPercent(percent)})</small>
+            <small className="audiobook-mobile-progress">
+              {totalDuration > 0
+                ? `${formatAudioRemaining(Math.max(0, totalDuration - elapsed), playbackRate)} left at ${formatPlaybackRate(playbackRate)}× · ${formatPercent(percent)}`
+                : `${book.author || "Unknown author"} · ${formatPercent(percent)}`}
+            </small>
+          </div>
+
+          <div className="audiobook-transport">
+            <input
+              className="audiobook-seek"
+              type="range"
+              min="0"
+              max="1000"
+              value={Math.round(percent * 1000)}
+              aria-label="Audiobook position"
+              onChange={(event) => seekToPercent(Number(event.target.value) / 1000)}
+            />
+            <div className="audiobook-time-row">
+              <span>{formatAudioTime(elapsed)}</span>
+              <span className="audiobook-mobile-time-remaining">{totalDuration > 0 ? `-${formatAudioTime(Math.max(0, totalDuration - elapsed))}` : formatPercent(percent)}</span>
+              <span className="audiobook-desktop-time-remaining">{totalDuration > 0 ? formatAudioTime(Math.max(0, totalDuration - elapsed)) : formatPercent(percent)}</span>
+            </div>
+            <div className="audiobook-buttons">
+              <button
+                type="button"
+                className="audiobook-track-button"
+                title="Previous track"
+                aria-label="Previous track"
+                disabled={trackIndex === 0}
+                onClick={() => selectTrack(trackIndex - 1, 0, playing)}
+              >
+                <SkipBack size={34} strokeWidth={1.9} />
+              </button>
+              <button
+                type="button"
+                className="audiobook-skip-button"
+                title="Back 15 seconds"
+                aria-label="Back 15 seconds"
+                onClick={() => seekRelative(-15)}
+              >
+                <span className="audiobook-skip-icon" aria-hidden="true">
+                  <RotateCcw size={26} />
+                  <span className="audiobook-skip-seconds">15</span>
+                </span>
+                <small className="audiobook-desktop-jump-label">−15</small>
+              </button>
+              <button
+                type="button"
+                className="audiobook-play-button"
+                title={playing ? "Pause" : "Play"}
+                onClick={() => {
+                  if (playing) {
+                    audioRef.current?.pause();
+                  } else {
+                    void audioRef.current?.play();
+                  }
+                }}
+              >
+                {playing ? <Pause size={31} fill="currentColor" /> : <Play size={31} fill="currentColor" />}
+              </button>
+              <button
+                type="button"
+                className="audiobook-skip-button"
+                title="Forward 15 seconds"
+                aria-label="Forward 15 seconds"
+                onClick={() => seekRelative(15)}
+              >
+                <span className="audiobook-skip-icon" aria-hidden="true">
+                  <RotateCw size={26} />
+                  <span className="audiobook-skip-seconds">15</span>
+                </span>
+                <small className="audiobook-desktop-jump-label">+15</small>
+              </button>
+              <button
+                type="button"
+                className="audiobook-track-button"
+                title="Next track"
+                aria-label="Next track"
+                disabled={trackIndex === tracks.length - 1}
+                onClick={() => selectTrack(trackIndex + 1, 0, playing)}
+              >
+                <SkipForward size={34} strokeWidth={1.9} />
+              </button>
+            </div>
+            <div className="audiobook-desktop-tools" aria-label="Audiobook playback tools">
+              <button type="button" className={speedOpen ? "is-active" : ""} onClick={() => setSpeedOpen((value) => !value)}>
+                <Gauge size={27} /><span>Speed ({formatPlaybackRate(playbackRate)}×)</span>
+              </button>
+              <button type="button" className={chaptersOpen ? "is-active" : ""} onClick={() => setChaptersOpen((value) => !value)}>
+                <ListMusic size={28} /><span>Tracks</span>
+              </button>
+              <label className="audiobook-desktop-volume">
+                <Volume2 size={25} />
+                <input type="range" min="0" max="1" step="0.05" value={volume} aria-label="Volume" onChange={(event) => setVolume(Number(event.target.value))} />
+              </label>
+            </div>
+            {speedOpen ? <div className="audiobook-options audiobook-pocket-speed-panel">
+              <label className="audiobook-speed">
+                <span>Speed</span>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="3"
+                  step="0.05"
+                  value={playbackRate}
+                  aria-label="Playback speed"
+                  onChange={(event) => setPlaybackRate(Number(event.target.value))}
+                />
+                <strong>{formatPlaybackRate(playbackRate)}×</strong>
+              </label>
+              <label className="audiobook-volume">
+                <Volume2 size={17} />
+                <input type="range" min="0" max="1" step="0.05" value={volume} aria-label="Volume" onChange={(event) => setVolume(Number(event.target.value))} />
+              </label>
+            </div> : null}
+          </div>
+
+          {tracks.length > 1 ? (
+            <aside className="audiobook-chapters">
+              <h3>Parts</h3>
+              <div>
+                {tracks.map((item, index) => (
+                  <button key={`${item.index}-${item.filename}`} type="button" className={index === trackIndex ? "is-active" : ""} onClick={() => selectTrack(index, 0, playing)}>
+                    <span>{index + 1}</span>
+                    <strong>{item.title}</strong>
+                    <small>{item.durationSeconds ? formatAudioTime(item.durationSeconds) : ""}</small>
+                  </button>
+                ))}
+              </div>
+            </aside>
+          ) : null}
+        </div>
+        ) : null}
+
+        {activeTab === "details" ? (
+          <section className="audiobook-pocket-panel audiobook-pocket-details">
+            <div className="audiobook-pocket-detail-cover"><BookCover book={book} /></div>
+            <div className="audiobook-pocket-detail-copy">
+              <span>Audiobook</span>
+              <h2>{book.title}</h2>
+              {book.subtitle ? <h3>{book.subtitle}</h3> : null}
+              <p className="audiobook-pocket-byline">
+                {book.author || "Unknown author"}{book.narrator ? ` · Narrated by ${book.narrator}` : ""}
+              </p>
+              <p>{book.description || "No description is available for this audiobook."}</p>
+              <dl>
+                <div><dt>Chapters</dt><dd>{tracks.length}</dd></div>
+                <div><dt>Length</dt><dd>{totalDuration ? formatAudioTime(totalDuration) : "Unknown"}</dd></div>
+                <div><dt>Progress</dt><dd>{formatPercent(percent)}</dd></div>
+              </dl>
+              <div className="audiobook-pocket-detail-controls">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={offlineStored}
+                  className={`offline-mode-toggle ${offlineStored ? "is-active" : ""}`}
+                  disabled={!canStoreOffline || offlineBusy}
+                  onClick={() => void toggleOfflineMode()}
+                >
+                  {offlineBusy ? <Loader2 className="spin" size={16} /> : offlineStored ? <WifiOff size={16} /> : <Download size={16} />}
+                  <span>{offlineBusy ? `Saving ${offlineDownload.completed}/${offlineDownload.total}` : offlineStored ? "Offline ready" : "Make available offline"}</span>
+                  <i aria-hidden="true"><b /></i>
+                </button>
+                <label className="audiobook-volume">
+                  <Volume2 size={17} />
+                  <input type="range" min="0" max="1" step="0.05" value={volume} aria-label="Volume" onChange={(event) => setVolume(Number(event.target.value))} />
+                </label>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {activeTab === "bookmarks" ? (
+          <section className="audiobook-pocket-panel audiobook-pocket-bookmarks">
+            <div className="audiobook-pocket-panel-heading">
+              <div><span>Saved places</span><h2>Bookmarks</h2></div>
+              <button type="button" onClick={onBookmark}><BookmarkIcon size={18} /> Add current position</button>
+            </div>
+            {bookmarks.length ? bookmarks.map((bookmark) => (
+              <article key={bookmark.id}>
+                <BookmarkIcon size={18} />
+                <div><strong>{bookmark.label || `Bookmark at ${formatPercent(bookmark.percent)}`}</strong><small>{formatPercent(bookmark.percent)} through the audiobook</small></div>
+                <button type="button" aria-label={`Delete ${bookmark.label}`} onClick={() => onDeleteBookmark(bookmark)}><Trash2 size={17} /></button>
+              </article>
+            )) : (
+              <div className="audiobook-pocket-empty"><BookmarkIcon size={32} /><strong>No bookmarks yet</strong><span>Save the current position so it is easy to find later.</span></div>
+            )}
+          </section>
+        ) : null}
+
+        {chaptersOpen ? (
+          <aside className="audiobook-pocket-chapters" aria-label="Audiobook chapters">
+            <header><div><span>{tracks.length} chapters</span><h3>{book.title}</h3></div><button type="button" aria-label="Close chapters" onClick={() => setChaptersOpen(false)}><X size={20} /></button></header>
+            <div>{tracks.map((item, index) => (
+              <button key={`${item.index}-${item.filename}`} type="button" className={index === trackIndex ? "is-active" : ""} onClick={() => { selectTrack(index, 0, playing); setChaptersOpen(false); setActiveTab("playing"); }}>
+                <span>{index + 1}</span><strong>{item.title}</strong><small>{item.durationSeconds ? formatAudioTime(item.durationSeconds) : ""}</small>
+              </button>
+            ))}</div>
+          </aside>
+        ) : null}
+
+        <footer className="audiobook-pocket-tools" aria-label="Audiobook tools">
+          <button type="button" className={speedOpen ? "is-active" : ""} title="Playback speed" onClick={() => { setSpeedOpen((value) => !value); setActiveTab("playing"); }}><strong>{formatPlaybackRate(playbackRate)}×</strong><span>Speed</span></button>
+          <button type="button" title="Offline mode" className={offlineStored ? "is-active" : ""} onClick={() => setActiveTab("details")}><Download size={22} /><span>Offline</span></button>
+          <button type="button" title="Add bookmark" onClick={onBookmark}><BookmarkIcon size={24} /><span>Bookmark</span></button>
+          <button type="button" title="Share audiobook" onClick={() => void shareAudiobook()}><Share2 size={23} /><span>Share</span></button>
+          <button type="button" title="Chapters" className={chaptersOpen ? "is-active" : ""} onClick={() => setChaptersOpen((value) => !value)}><ListMusic size={23} /><span>Chapters</span></button>
+        </footer>
+      </section>
+      {audioElement}
+    </>
   );
 }
 
