@@ -273,10 +273,12 @@ function clearSessionCookie(req, res) {
 }
 
 function cookieString(name, value, req, maxAgeMs) {
-  const secure =
-    process.env.COOKIE_SECURE === "true" ||
-    req.secure ||
-    req.headers["x-forwarded-proto"] === "https";
+  // Browsers drop Secure cookies set over plain HTTP, so a direct LAN request
+  // (no proxy header, no TLS) never gets one, even with COOKIE_SECURE=true.
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  const httpsRequest = req.secure || forwardedProto === "https";
+  const proxied = Boolean(forwardedProto);
+  const secure = httpsRequest || (process.env.COOKIE_SECURE === "true" && proxied);
   const parts = [
     `${name}=${value}`,
     "Path=/",
