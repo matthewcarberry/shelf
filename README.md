@@ -127,7 +127,7 @@ TRUST_PROXY=true
 COOKIE_SECURE=true
 ```
 
-If you test the container directly over plain HTTP, set `COOKIE_SECURE=false`; secure cookies are only sent by browsers over HTTPS.
+Requests that reach the container directly over plain HTTP (for example `http://unraid-ip:9191` on your LAN) always get a non-Secure cookie, so signing in on the LAN keeps working with `COOKIE_SECURE=true`. Requests through your HTTPS proxy still get a Secure cookie.
 
 ## Registration And Notifications
 
