@@ -28,7 +28,8 @@ printf 'OLD_IMAGE=%s\n' "${old_image}"
 printf 'OLD_SERVER_ID=%s\n' "${old_server_id}"
 printf 'ROLLBACK_TAG=%s\n' "${rollback_tag}"
 
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 
 health_status="starting"
 for _attempt in $(seq 1 60); do
@@ -54,8 +55,9 @@ new_server_id="$(docker exec "${container_name}" node -e 'fetch("http://127.0.0.
 storage_check="$(docker exec "${container_name}" node --input-type=module -e 'import { DatabaseSync } from "node:sqlite"; const db=new DatabaseSync("/data/shelfstream.sqlite",{readOnly:true}); const count=(table)=>db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count; const result={integrity:db.prepare("PRAGMA integrity_check").get().integrity_check,schemaVersion:db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version,users:count("users"),books:count("books"),progress:count("progress"),bookmarks:count("bookmarks"),highlights:count("highlights"),preferences:count("preferences"),reviews:count("reviews"),profileUsage:count("profile_usage"),readList:count("read_list"),platformAccounts:count("platform_accounts"),registeredServers:count("registered_servers"),memberships:count("server_memberships"),libraries:count("libraries"),invitations:count("server_invitations")}; process.stdout.write(JSON.stringify(result)); db.close();')"
 
 if [[ "${new_image}" == "${old_image}" ]]; then
-  printf 'DEPLOY_RESULT=failed-image-unchanged\n'
-  exit 1
+  docker image rm "${rollback_tag}" >/dev/null
+  printf 'DEPLOY_RESULT=already-up-to-date\n'
+  exit 0
 fi
 if [[ "${new_server_id}" != "${old_server_id}" ]]; then
   printf 'DEPLOY_RESULT=failed-server-identity-changed\n'

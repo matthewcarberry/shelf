@@ -1,6 +1,8 @@
 services:
   shelfstream:
-    build: .
+    # Published by .github/workflows/docker-publish.yml on every push to main.
+    # Pin a release (for example :0.1.0) or a commit (:sha-abc1234) instead of :latest if preferred.
+    image: ghcr.io/matthewcarberry/shelf:${SHELF_IMAGE_TAG:-latest}
     container_name: shelfstream
     restart: unless-stopped
     labels:

@@ -34,8 +34,17 @@ For local testing without Docker, copied or uploaded books go to `runtime/librar
 
 ## Docker
 
+Every push to `main` builds the image and publishes it to GitHub Container Registry as `ghcr.io/matthewcarberry/shelf:latest` (plus `sha-<commit>` tags, and version tags such as `0.1.0` when a `v0.1.0` git tag is pushed). Compose pulls that image:
+
 ```bash
-APP_PASSWORD="use-a-long-random-password" docker compose up --build
+APP_PASSWORD="use-a-long-random-password" docker compose up -d
+```
+
+Set `SHELF_IMAGE_TAG` to pin a release or commit instead of `latest`. To run an image built from a local checkout instead:
+
+```bash
+docker build -t ghcr.io/matthewcarberry/shelf:local .
+SHELF_IMAGE_TAG=local docker compose up -d
 ```
 
 Open `http://localhost:9191`, or set `SHELFSTREAM_HOST_PORT` to a different host port before starting Compose.
@@ -50,7 +59,7 @@ For remote access, set a real password before starting the container. On first b
 ```bash
 APP_USERNAME=admin
 APP_PASSWORD="use-a-long-random-password"
-docker compose up --build
+docker compose up -d
 ```
 
 If authentication is enabled and `/data` has no existing users, the production container will refuse to start unless `APP_PASSWORD` or `APP_PASSWORD_HASH` is configured.
@@ -65,8 +74,9 @@ After the first administrator exists, use **Server settings** to create a scoped
 
 ## Unraid
 
-Use the compose file as a starting point or create a Docker template with:
+Use the compose file as a starting point or create a Docker template ([`unraid/my-shelfstream.xml`](unraid/my-shelfstream.xml)) with:
 
+- Repository: `ghcr.io/matthewcarberry/shelf:latest`
 - Container port: `3000`
 - Host port: any available port; this deployment uses `9191`
 - `/library` mapped to your books and audiobooks share, for example `/mnt/user/media/books`
