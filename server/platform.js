@@ -169,7 +169,7 @@ export class PlatformService {
     const localUser = this.store.getPublicUser(userId);
     const account = localUser ? this.ensureAccount(localUser) : this.getAccount(userId);
     if (!account) {
-      const error = new Error("ShelfStream account not found");
+      const error = new Error("Shelf account not found");
       error.status = 404;
       throw error;
     }
@@ -232,7 +232,7 @@ export class PlatformService {
 
   async setAccountPreferences(accountId, patch) {
     if (!this.getAccount(accountId)) {
-      const error = new Error("ShelfStream account not found");
+      const error = new Error("Shelf account not found");
       error.status = 404;
       throw error;
     }
@@ -404,7 +404,7 @@ export class PlatformService {
   async acceptInvitation(accountId, token) {
     const account = this.getAccount(accountId);
     if (!account) {
-      const error = new Error("ShelfStream account not found");
+      const error = new Error("Shelf account not found");
       error.status = 404;
       throw error;
     }
@@ -417,7 +417,7 @@ export class PlatformService {
       throw error;
     }
     if (row.recipient && ![account.username, account.email].filter(Boolean).includes(row.recipient)) {
-      const error = new Error("This invitation was issued to a different ShelfStream account");
+      const error = new Error("This invitation was issued to a different Shelf account");
       error.status = 403;
       throw error;
     }
@@ -649,7 +649,7 @@ export class PlatformService {
     const endpoint = normalizeEndpoint(endpointUrl);
     const identity = await fetchServerIdentity(endpoint);
     if (identity.serverId !== this.serverIdentity.serverId || identity.publicKey !== this.serverIdentity.publicKey) {
-      const error = new Error("That URL does not identify this ShelfStream server");
+      const error = new Error("That URL does not identify this Shelf server");
       error.status = 400;
       throw error;
     }
@@ -667,14 +667,14 @@ export class PlatformService {
   async claimRemoteServer(accountId, { endpointUrl, claimCode }) {
     const account = this.getAccount(accountId);
     if (!account) {
-      const error = new Error("ShelfStream account not found");
+      const error = new Error("Shelf account not found");
       error.status = 404;
       throw error;
     }
     const endpoint = normalizeEndpoint(endpointUrl);
     const identity = await fetchServerIdentity(endpoint);
     if (!identity.serverId || !identity.publicKey) {
-      const error = new Error("The remote server did not publish a valid ShelfStream identity");
+      const error = new Error("The remote server did not publish a valid Shelf identity");
       error.status = 400;
       throw error;
     }
@@ -718,7 +718,7 @@ export class PlatformService {
           updated_at = excluded.updated_at
       `).run(
         identity.serverId,
-        String(identity.name || "ShelfStream Server").trim().slice(0, 100),
+        String(identity.name || "Shelf Server").trim().slice(0, 100),
         identity.publicKey,
         accountId,
         endpoint,
@@ -936,7 +936,7 @@ export class PlatformService {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const error = new Error(body.error || `The ShelfStream account service returned ${response.status}`);
+      const error = new Error(body.error || `The Shelf account service returned ${response.status}`);
       error.status = response.status;
       throw error;
     }
@@ -1120,7 +1120,7 @@ function normalizeEndpoint(value, { allowEmpty = false } = {}) {
   }
   const localHttp = url.protocol === "http:" && isPrivateHostname(url.hostname);
   if (url.protocol !== "https:" && !localHttp) {
-    const error = new Error("Remote ShelfStream servers must use HTTPS");
+    const error = new Error("Remote Shelf servers must use HTTPS");
     error.status = 400;
     throw error;
   }
@@ -1149,7 +1149,7 @@ async function fetchServerIdentity(endpoint) {
     if (!response.ok) throw new Error(`Server identity check returned ${response.status}`);
     return response.json();
   } catch (cause) {
-    const error = new Error(`ShelfStream could not verify that server address: ${cause.message}`);
+    const error = new Error(`Shelf could not verify that server address: ${cause.message}`);
     error.status = 400;
     throw error;
   } finally {

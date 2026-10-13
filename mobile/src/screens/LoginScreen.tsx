@@ -41,7 +41,7 @@ export function LoginScreen({onLogin}: {onLogin: (session: Session) => Promise<v
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.container}>
         <View style={styles.logo}><BookOpen color="#fff" size={34} /></View>
-        <Text style={styles.title}>ShelfStream</Text>
+        <Text style={styles.title}>Shelf</Text>
         <Text style={styles.subtitle}>Your books and audiobooks, everywhere.</Text>
         <View style={styles.form}>
           <Text style={styles.label}>Server</Text>
@@ -78,7 +78,7 @@ export function LoginScreen({onLogin}: {onLogin: (session: Session) => Promise<v
             <Text style={styles.buttonText}>{busy ? 'Signing in…' : 'Sign in'}</Text>
           </Pressable>
         </View>
-        <Text style={styles.privacy}>Your password is sent only to your ShelfStream server. The mobile token is stored in the device keychain.</Text>
+        <Text style={styles.privacy}>Your password is sent only to your Shelf server. The mobile token is stored in the device keychain.</Text>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

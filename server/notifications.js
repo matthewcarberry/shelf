@@ -42,9 +42,9 @@ export async function notifyRegistrationAttempt(event) {
   const recipient = process.env.REGISTRATION_NOTIFY_EMAIL || emailSenderAddress();
   const message = {
     to: recipient,
-    subject: `ShelfStream registration ${event.status}: ${event.username || "unknown"}`,
+    subject: `Shelf registration ${event.status}: ${event.username || "unknown"}`,
     text: [
-      "ShelfStream registration attempt",
+      "Shelf registration attempt",
       "",
       `Status: ${event.status}`,
       `Reason: ${event.reason || "n/a"}`,

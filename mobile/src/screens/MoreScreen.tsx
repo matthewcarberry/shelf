@@ -27,7 +27,7 @@ export function MoreScreen({session, sessions, platform, onServerSwitch, onFullA
         <View style={styles.avatar}><Text style={styles.avatarText}>{session.user.displayName.slice(0, 1).toUpperCase()}</Text></View>
         <View><Text style={styles.name}>{session.user.displayName}</Text><Text style={styles.muted}>{session.user.role}</Text></View>
       </View>
-      <Pressable style={styles.row} onPress={onFullApp}><BookOpen color={colors.pink} /><View style={styles.rowText}><Text style={styles.label}>Full ShelfStream</Text><Text style={styles.muted}>Add titles, edit metadata, read ebooks, send to Kindle, and manage users</Text></View></Pressable>
+      <Pressable style={styles.row} onPress={onFullApp}><BookOpen color={colors.pink} /><View style={styles.rowText}><Text style={styles.label}>Full Shelf</Text><Text style={styles.muted}>Add titles, edit metadata, read ebooks, send to Kindle, and manage users</Text></View></Pressable>
       <Text style={styles.sectionLabel}>SERVERS</Text>
       {servers.map(server => (
         <Pressable

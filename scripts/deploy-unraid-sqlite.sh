@@ -35,7 +35,7 @@ extract_json_string() {
 cd "${project_dir}"
 
 if [[ -f "${data_dir}/shelfstream.sqlite" ]]; then
-  echo "ShelfStream is already using SQLite; this one-time migration script will not run again."
+  echo "Shelf is already using SQLite; this one-time migration script will not run again."
   exit 1
 fi
 
@@ -93,7 +93,7 @@ fi
 
 after_dangling="$(docker image ls -q --filter dangling=true --filter label=com.docker.compose.project=shelfstream-src --filter label=com.docker.compose.service=shelfstream | sort -u | sed '/^$/d' | wc -l | tr -d ' ')"
 if [[ "${after_dangling}" != "${before_dangling}" ]]; then
-  echo "ShelfStream dangling image count changed: before=${before_dangling} after=${after_dangling}"
+  echo "Shelf dangling image count changed: before=${before_dangling} after=${after_dangling}"
   exit 1
 fi
 

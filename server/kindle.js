@@ -33,7 +33,7 @@ export function validateKindleEmail(value) {
 
 export async function sendBookToKindle({ store, userId, book, kindleEmail }) {
   if (!emailDeliveryConfigured()) {
-    const error = new Error("ShelfStream email delivery is not configured. Ask an administrator to configure SMTP.");
+    const error = new Error("Shelf email delivery is not configured. Ask an administrator to configure SMTP.");
     error.status = 503;
     throw error;
   }
@@ -55,7 +55,7 @@ export async function sendBookToKindle({ store, userId, book, kindleEmail }) {
   const filePath = book.path;
   const stat = filePath ? await fs.stat(filePath).catch(() => null) : null;
   if (!stat?.isFile()) {
-    const error = new Error("The EPUB file could not be found on the ShelfStream server");
+    const error = new Error("The EPUB file could not be found on the Shelf server");
     error.status = 404;
     throw error;
   }
@@ -63,7 +63,7 @@ export async function sendBookToKindle({ store, userId, book, kindleEmail }) {
   const maxAttachmentBytes = kindleMaxAttachmentBytes();
   if (stat.size > maxAttachmentBytes) {
     const error = new Error(
-      `This EPUB is larger than ShelfStream's ${formatMegabytes(maxAttachmentBytes)} MB email limit`
+      `This EPUB is larger than Shelf's ${formatMegabytes(maxAttachmentBytes)} MB email limit`
     );
     error.status = 413;
     throw error;
@@ -77,7 +77,7 @@ export async function sendBookToKindle({ store, userId, book, kindleEmail }) {
   const message = {
     to: email,
     subject: book.title || filename,
-    text: `Sent from ShelfStream: ${book.title || filename}`,
+    text: `Sent from Shelf: ${book.title || filename}`,
     attachments: [
       {
         filename,
@@ -125,7 +125,7 @@ export function kindleMaxAttachmentBytes() {
 }
 
 function kindleFilename(book) {
-  const title = sanitize(String(book.title || path.basename(book.path, ".epub"))) || "ShelfStream book";
+  const title = sanitize(String(book.title || path.basename(book.path, ".epub"))) || "Shelf book";
   return `${title}.epub`;
 }
 

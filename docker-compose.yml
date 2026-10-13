@@ -12,7 +12,7 @@ services:
       - "${SHELFSTREAM_HOST_PORT:-9191}:3000"
     environment:
       PORT: "3000"
-      SERVER_NAME: ${SERVER_NAME:-ShelfStream}
+      SERVER_NAME: ${SERVER_NAME:-Shelf}
       PUBLIC_URL: ${PUBLIC_URL:-https://shelf-stream.com}
       LIBRARY_DIR: /library
       DATA_DIR: /data

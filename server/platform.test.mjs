@@ -23,7 +23,7 @@ test("separates accounts, server memberships, invitations, and libraries", async
     await store.upsertBook({
       id: "ebook-1",
       title: "Book One",
-      author: "ShelfStream",
+      author: "Shelf",
       filename: "book.epub",
       relPath: "book.epub",
       ext: ".epub",

@@ -1,20 +1,20 @@
-# ShelfStream Multi-Server Platform
+# Shelf Multi-Server Platform
 
 Status: P0 platform foundation deployed and verified on the primary Unraid server (2026-08-27)
 
-ShelfStream now implements the complete self-hosted P0 path in one binary: SQLite schema 4, permanent server and control-plane identities, platform accounts, server claiming, memberships and invitations, first-class libraries and library grants, endpoint verification, one-use connection tickets, and web/mobile server switching. The current primary deployment runs in combined control-plane/node mode. A separately operated PostgreSQL control plane, relay service, mDNS discovery, and Windows installer remain later phases.
+Shelf now implements the complete self-hosted P0 path in one binary: SQLite schema 4, permanent server and control-plane identities, platform accounts, server claiming, memberships and invitations, first-class libraries and library grants, endpoint verification, one-use connection tickets, and web/mobile server switching. The current primary deployment runs in combined control-plane/node mode. A separately operated PostgreSQL control plane, relay service, mDNS discovery, and Windows installer remain later phases.
 
 ## Product goal
 
-ShelfStream should use one global account for every client while allowing that account to:
+Shelf should use one global account for every client while allowing that account to:
 
-- create and own one or more ShelfStream servers;
+- create and own one or more Shelf servers;
 - accept invitations to servers owned by other people;
 - switch between joined servers without signing in again;
 - keep each server's media files and reading/listening state on that server;
-- install a ShelfStream server on an ordinary Windows machine through a guided setup flow.
+- install a Shelf server on an ordinary Windows machine through a guided setup flow.
 
-This is a control-plane/node architecture. The ShelfStream service coordinates identity and discovery, but it does not become the storage location for privately hosted books or audiobooks.
+This is a control-plane/node architecture. The Shelf service coordinates identity and discovery, but it does not become the storage location for privately hosted books or audiobooks.
 
 ## Implemented architecture
 
@@ -57,9 +57,9 @@ Invitation secrets and connection-ticket nonces are stored only as hashes. Ticke
 
 ## Target architecture
 
-### 1. Future standalone ShelfStream control plane
+### 1. Future standalone Shelf control plane
 
-The control plane runs at ShelfStream-operated endpoints such as `api.shelf-stream.com` and owns only platform coordination data:
+The control plane runs at Shelf-operated endpoints such as `api.shelf-stream.com` and owns only platform coordination data:
 
 - global accounts and credential recovery;
 - registered server identities and ownership;
@@ -73,7 +73,7 @@ The control plane must not store library files, audiobook streams, book metadata
 
 Recommended production storage is PostgreSQL. Account passwords should use Argon2id, with passkeys and MFA added after the first release.
 
-### 2. ShelfStream server node
+### 2. Shelf server node
 
 The existing Express application becomes a server node. A node owns:
 
@@ -103,7 +103,7 @@ The client must treat `(serverId, bookId)` as the identity of a title. A bare `b
 ### Global roles
 
 - Account user: can own and join servers.
-- Platform operator: limited ShelfStream service administration; never implies access to a private server library.
+- Platform operator: limited Shelf service administration; never implies access to a private server library.
 
 ### Server roles
 
@@ -135,11 +135,11 @@ Connection order should be:
 
 1. Verified local-network endpoint discovered through mDNS.
 2. Host-configured direct HTTPS endpoint.
-3. ShelfStream relay tunnel when direct connectivity is unavailable.
+3. Shelf relay tunnel when direct connectivity is unavailable.
 
 The first release should support host-configured HTTPS endpoints. That preserves the current Nginx Proxy Manager deployment and avoids making the control plane a media bandwidth bottleneck.
 
-The Windows-friendly release should add an outbound node connection to a ShelfStream relay. Because the connection originates from the host, users do not need port forwarding, a static public IP, or their own reverse proxy. Relay bandwidth and abuse controls make this a later infrastructure phase, not part of the initial identity migration.
+The Windows-friendly release should add an outbound node connection to a Shelf relay. Because the connection originates from the host, users do not need port forwarding, a static public IP, or their own reverse proxy. Relay bandwidth and abuse controls make this a later infrastructure phase, not part of the initial identity migration.
 
 The control plane should advertise endpoints, but the client must verify that every endpoint presents the expected server identity.
 
@@ -189,7 +189,7 @@ Existing media APIs remain on the node. Node authorization resolves a global acc
 The Windows host experience should include:
 
 - a signed installer;
-- an embedded Node runtime and ShelfStream server build;
+- an embedded Node runtime and Shelf server build;
 - a Windows service wrapper so the server runs without a logged-in desktop user;
 - a localhost setup wizard for account sign-in, server claiming, library-folder selection, and invite creation;
 - Windows Firewall configuration;

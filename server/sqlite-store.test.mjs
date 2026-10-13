@@ -58,7 +58,7 @@ test("persists profile usage and a user's Read List across restarts", async () =
     await first.upsertBook({
       id: "profile-book",
       title: "Profile Book",
-      author: "ShelfStream",
+      author: "Shelf",
       filename: "profile.epub",
       relPath: "profile.epub",
       ext: ".epub",
@@ -167,7 +167,7 @@ function legacyFixture() {
       "book-1": {
         id: "book-1",
         title: "Migration Test",
-        author: "ShelfStream",
+        author: "Shelf",
         addedAt: timestamp,
         updatedAt: timestamp
       }

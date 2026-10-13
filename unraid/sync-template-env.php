@@ -10,7 +10,7 @@ $environmentJson = shell_exec(
 );
 
 if ($environmentJson === null) {
-    fwrite(STDERR, "Unable to inspect the ShelfStream container.\n");
+    fwrite(STDERR, "Unable to inspect the Shelf container.\n");
     exit(1);
 }
 
@@ -26,7 +26,7 @@ foreach ($environmentEntries as $entry) {
 
 $template = simplexml_load_file($templatePath);
 if ($template === false) {
-    fwrite(STDERR, "Unable to read the ShelfStream Docker Manager template.\n");
+    fwrite(STDERR, "Unable to read the Shelf Docker Manager template.\n");
     exit(1);
 }
 
@@ -38,8 +38,8 @@ foreach ($template->Config as $config) {
 }
 
 if ($template->asXML($templatePath) === false) {
-    fwrite(STDERR, "Unable to save the ShelfStream Docker Manager template.\n");
+    fwrite(STDERR, "Unable to save the Shelf Docker Manager template.\n");
     exit(1);
 }
 
-echo "ShelfStream Docker Manager template synchronized.\n";
+echo "Shelf Docker Manager template synchronized.\n";

@@ -20,7 +20,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
     return (await response.json()) as T;
   }
   const body = await response.json().catch(() => ({}));
-  throw new Error(body.error || `ShelfStream returned ${response.status}`);
+  throw new Error(body.error || `Shelf returned ${response.status}`);
 }
 
 export async function mobileLogin(
@@ -32,7 +32,7 @@ export async function mobileLogin(
   const response = await fetch(`${serverUrl}/api/auth/mobile/login`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({username, password, deviceName: 'ShelfStream mobile app'}),
+    body: JSON.stringify({username, password, deviceName: 'Shelf mobile app'}),
   });
   const result = await parseResponse<{
     token: string;
@@ -80,7 +80,7 @@ export async function connectToServer(session: Session, serverId: string): Promi
   const response = await fetch(`${connection.endpointUrl}/api/auth/mobile/exchange`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ticket: connection.ticket, deviceName: 'ShelfStream mobile app'}),
+    body: JSON.stringify({ticket: connection.ticket, deviceName: 'Shelf mobile app'}),
   });
   const result = await parseResponse<{
     token: string;

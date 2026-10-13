@@ -61,7 +61,7 @@ async function startTestServer({ dataDir, libraryDir, port }) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (server.exitCode !== null) {
       const stderr = await streamText(server.stderr);
-      throw new Error(`ShelfStream test server exited before becoming healthy: ${stderr}`);
+      throw new Error(`Shelf test server exited before becoming healthy: ${stderr}`);
     }
     try {
       const response = await fetch(`${base}/api/health`);
@@ -74,7 +74,7 @@ async function startTestServer({ dataDir, libraryDir, port }) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   await stopTestServer(server);
-  throw new Error("ShelfStream test server did not become healthy");
+  throw new Error("Shelf test server did not become healthy");
 }
 
 async function stopTestServer(server) {

@@ -18,7 +18,7 @@ test("reuses unchanged audiobook track metadata and preserves the title identity
   const existing = {
     id: "existing-audiobook-id",
     title: "A Cached Audiobook",
-    author: "ShelfStream QA",
+    author: "Shelf QA",
     readingFormat: "audio",
     mediaType: "audiobook",
     audioFiles: [{

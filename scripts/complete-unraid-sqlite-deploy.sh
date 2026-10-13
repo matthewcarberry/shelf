@@ -134,7 +134,7 @@ if docker image inspect "${old_image}" >/dev/null 2>&1; then
 fi
 
 if docker image inspect "${old_image}" >/dev/null 2>&1; then
-  echo "Retired ShelfStream image still exists"
+  echo "Retired Shelf image still exists"
   exit 1
 fi
 

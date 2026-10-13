@@ -14,7 +14,7 @@ export function WebAppScreen({session, bookId}: {session: Session; bookId?: stri
         credentials: 'include',
         headers: { Authorization: ${JSON.stringify(`Bearer ${session.token}`)} }
       }).then(function (response) {
-        if (!response.ok) throw new Error('Unable to open ShelfStream');
+        if (!response.ok) throw new Error('Unable to open Shelf');
         window.location.replace(${JSON.stringify(target)});
       }).catch(function (error) { document.body.innerText = error.message; });
       return true;

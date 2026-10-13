@@ -54,7 +54,7 @@ test('mobile bearer tokens authenticate media APIs and can be revoked', async ()
 async function waitForHealth(base, server) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (server.exitCode !== null) {
-      throw new Error('ShelfStream test server exited before becoming healthy');
+      throw new Error('Shelf test server exited before becoming healthy');
     }
     try {
       const response = await fetch(`${base}/api/health`);
@@ -64,5 +64,5 @@ async function waitForHealth(base, server) {
     }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  throw new Error('ShelfStream test server did not become healthy');
+  throw new Error('Shelf test server did not become healthy');
 }

@@ -50,7 +50,7 @@ await ensureStorage(paths);
 await store.init();
 const serverIdentity = store.getPublicServerIdentity();
 const storageInfo = store.getStorageInfo();
-const serverName = String(process.env.SERVER_NAME || os.hostname()).trim() || "ShelfStream Server";
+const serverName = String(process.env.SERVER_NAME || os.hostname()).trim() || "Shelf Server";
 const auth = createAuth(store);
 await auth.init();
 const platform = new PlatformService(store, {
@@ -94,7 +94,7 @@ app.use(express.urlencoded({ extended: false, limit: "16kb" }));
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
-    app: "ShelfStream",
+    app: "Shelf",
     serverId: serverIdentity.serverId,
     storage: storageInfo.engine,
     schemaVersion: storageInfo.schemaVersion,
@@ -227,7 +227,7 @@ app.post("/api/auth/register", async (req, res, next) => {
     });
     platform.ensureAccount(user, req.body?.email);
     attempt.status = "created";
-    attempt.reason = "ShelfStream account created; server invite required";
+    attempt.reason = "Shelf account created; server invite required";
     res.status(201).json(auth.issueSession(req, res, user));
   } catch (error) {
     attempt.status = "failed";
@@ -470,7 +470,7 @@ app.use("/api", (req, res, next) => {
   }
   const membership = platform.getMembership(serverIdentity.serverId, req.user.id);
   if (!membership) {
-    res.status(403).json({ error: "Join this ShelfStream server with an invitation before opening its libraries" });
+    res.status(403).json({ error: "Join this Shelf server with an invitation before opening its libraries" });
     return;
   }
   req.serverMembership = membership;
@@ -1288,7 +1288,7 @@ function dateValue(value) {
 
 const port = Number(process.env.PORT || 3000);
 const httpServer = app.listen(port, "0.0.0.0", () => {
-  console.log(`ShelfStream listening on http://0.0.0.0:${port}`);
+  console.log(`Shelf listening on http://0.0.0.0:${port}`);
   console.log(`Library: ${paths.libraryDir}`);
   console.log(`Data: ${paths.dataDir}`);
   console.log(`Server ID: ${serverIdentity.serverId}`);
