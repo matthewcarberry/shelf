@@ -1,0 +1,12 @@
+node_modules/
+dist/
+runtime/
+.env
+*.log
+
+# Local tooling and side projects kept out of this repo
+.codex/
+.codex_tmp/
+.codex-remote-attachments/
+.agents/
+Librarr/

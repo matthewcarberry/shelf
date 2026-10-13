@@ -1,0 +1,48 @@
+services:
+  shelfstream:
+    build: .
+    container_name: shelfstream
+    restart: unless-stopped
+    labels:
+      net.unraid.docker.managed: "dockerman"
+      net.unraid.docker.webui: "http://[IP]:[PORT:3000]"
+      net.unraid.docker.shell: "/bin/sh"
+      net.unraid.docker.icon: "https://shelf-stream.com/favicon.svg"
+    ports:
+      - "${SHELFSTREAM_HOST_PORT:-9191}:3000"
+    environment:
+      PORT: "3000"
+      SERVER_NAME: ${SERVER_NAME:-ShelfStream}
+      PUBLIC_URL: ${PUBLIC_URL:-https://shelf-stream.com}
+      LIBRARY_DIR: /library
+      DATA_DIR: /data
+      ONLINE_DICTIONARY: "true"
+      AUTH_ENABLED: "true"
+      APP_USERNAME: ${APP_USERNAME:-admin}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      # Prefer APP_PASSWORD_HASH instead of APP_PASSWORD after generating one with:
+      # npm run hash-password
+      APP_PASSWORD_HASH: ${APP_PASSWORD_HASH:-}
+      # For direct plain HTTP testing, leave these false. Set both true behind HTTPS.
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
+      REGISTRATION_REQUIRE_EMAIL_NOTIFY: ${REGISTRATION_REQUIRE_EMAIL_NOTIFY:-true}
+      REGISTRATION_NOTIFY_EMAIL: ${REGISTRATION_NOTIFY_EMAIL:-}
+      REGISTRATION_MAX_ATTEMPTS: ${REGISTRATION_MAX_ATTEMPTS:-5}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      KINDLE_MAX_ATTACHMENT_MB: ${KINDLE_MAX_ATTACHMENT_MB:-25}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - /mnt/user/media/books:/library
+      - /mnt/user/appdata/shelfstream:/data

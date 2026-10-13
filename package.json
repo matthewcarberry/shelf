@@ -1,0 +1,45 @@
+{
+  "name": "shelfstream",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"node --watch server/index.js\" \"vite --host 0.0.0.0\"",
+    "build": "tsc --noEmit && vite build",
+    "start": "node server/index.js",
+    "test": "node --test server/*.test.mjs",
+    "test:mobile-auth": "node --test server/mobile-auth.test.mjs",
+    "test:storage": "node --test server/sqlite-store.test.mjs server/server-identity.test.mjs",
+    "hash-password": "node scripts/hash-password.js"
+  },
+  "dependencies": {
+    "@fontsource/rethink-sans": "^5.2.8",
+    "@vitejs/plugin-react": "latest",
+    "epubjs": "0.3.93",
+    "express": "latest",
+    "jszip": "^3.10.1",
+    "lucide-react": "latest",
+    "mime-types": "latest",
+    "multer": "latest",
+    "music-metadata": "^11.14.0",
+    "nanoid": "latest",
+    "nodemailer": "^9.0.3",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-pdf": "latest",
+    "sanitize-filename": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/mime-types": "latest",
+    "@types/multer": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "concurrently": "latest",
+    "typescript": "latest"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "^0.8.13"
+  }
+}
