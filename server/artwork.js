@@ -1,6 +1,6 @@
 const OPEN_LIBRARY_ORIGIN = "https://openlibrary.org";
 const OPEN_LIBRARY_COVERS_ORIGIN = "https://covers.openlibrary.org";
-const USER_AGENT = "ShelfStream/0.1 (+https://shelf-stream.com)";
+const USER_AGENT = "Shelf/0.1 (+https://shelf-stream.com)";
 const MAX_RESULTS = 24;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 

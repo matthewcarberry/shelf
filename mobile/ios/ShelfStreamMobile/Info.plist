@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>ShelfStream</string>
+	<string>Shelf</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -54,7 +54,7 @@
 					<key>UISceneClassName</key>
 					<string>CPTemplateApplicationScene</string>
 					<key>UISceneConfigurationName</key>
-					<string>ShelfStream CarPlay</string>
+					<string>Shelf CarPlay</string>
 					<key>UISceneDelegateClassName</key>
 					<string>RNTPCarPlaySceneDelegate</string>
 				</dict>

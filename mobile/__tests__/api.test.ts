@@ -1,6 +1,6 @@
 import {absoluteUrl, normalizeServerUrl} from '../src/api';
 
-describe('ShelfStream mobile API URLs', () => {
+describe('Shelf mobile API URLs', () => {
   it('normalizes the configured server once', () => {
     expect(normalizeServerUrl('shelf-stream.com/')).toBe('https://shelf-stream.com');
     expect(normalizeServerUrl('http://192.168.0.83:9191/')).toBe('http://192.168.0.83:9191');

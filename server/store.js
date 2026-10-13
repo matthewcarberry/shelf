@@ -91,7 +91,7 @@ export class SqliteStore {
   async queueSqliteWrite(write) {
     this.writeQueue = this.writeQueue.then(() => {
       if (!this.sqlite) {
-        throw new Error("ShelfStream SQLite store is not initialized");
+        throw new Error("Shelf SQLite store is not initialized");
       }
       write(this.sqlite);
     });
@@ -120,7 +120,7 @@ export class SqliteStore {
 
   getServerIdentity() {
     if (!this.serverIdentity) {
-      throw new Error("ShelfStream server identity is not initialized");
+      throw new Error("Shelf server identity is not initialized");
     }
     return { ...this.serverIdentity };
   }
@@ -519,7 +519,7 @@ export class SqliteStore {
 
   getProfileUsage(userId) {
     if (!this.sqlite) {
-      throw new Error("ShelfStream SQLite store is not initialized");
+      throw new Error("Shelf SQLite store is not initialized");
     }
     const row = this.sqlite.prepare(`
       SELECT reading_seconds, listening_seconds, updated_at
@@ -554,7 +554,7 @@ export class SqliteStore {
 
   listReadList(userId) {
     if (!this.sqlite) {
-      throw new Error("ShelfStream SQLite store is not initialized");
+      throw new Error("Shelf SQLite store is not initialized");
     }
     return this.sqlite.prepare(`
       SELECT book_id, added_at

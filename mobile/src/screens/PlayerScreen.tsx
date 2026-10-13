@@ -134,7 +134,7 @@ export function PlayerScreen({session, book, onBack}: Props) {
       <View style={styles.topBar}>
         <Pressable onPress={onBack} style={styles.iconButton}><ChevronDown color="#ffffff" size={31} /></Pressable>
         <View style={styles.topActions}>
-          <Pressable accessibilityLabel="Car playback" onPress={() => Alert.alert('Car playback', 'Connect to CarPlay or Android Auto and open ShelfStream from your car display.')} style={styles.iconButton}><CarFront color="#ffffff" size={25} /></Pressable>
+          <Pressable accessibilityLabel="Car playback" onPress={() => Alert.alert('Car playback', 'Connect to CarPlay or Android Auto and open Shelf from your car display.')} style={styles.iconButton}><CarFront color="#ffffff" size={25} /></Pressable>
           <Pressable accessibilityLabel="Share audiobook" onPress={() => Share.share({title: book.title, message: `${book.title} by ${book.author}`})} style={styles.iconButton}><Share2 color="#ffffff" size={25} /></Pressable>
         </View>
       </View>

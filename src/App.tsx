@@ -451,7 +451,7 @@ export function App() {
         setMessage("Server invitation accepted.");
         return accepted;
       })
-      .catch((error) => handleError(error, "Unable to load your ShelfStream servers"));
+      .catch((error) => handleError(error, "Unable to load your Shelf servers"));
   }, [auth, handleError, refreshPlatform]);
 
   useEffect(() => {
@@ -1215,7 +1215,7 @@ export function App() {
               <BookOpen size={20} />
             </div>
             <div className="sidebar-copy">
-              <h1 className="brand-heading">ShelfStream</h1>
+              <h1 className="brand-heading">Shelf</h1>
               <span>{activeServer?.name || "Your books, anywhere"}</span>
             </div>
           </div>
@@ -1649,7 +1649,7 @@ function LoginScreen({
             <BookOpen size={20} />
           </div>
           <div>
-            <h1 className="brand-heading">ShelfStream</h1>
+            <h1 className="brand-heading">Shelf</h1>
             <span>Private library access</span>
           </div>
         </div>
@@ -1936,9 +1936,9 @@ function ServerOnboarding({
       <div className="server-onboarding-hero">
         <span className="server-onboarding-icon"><Server size={30} /></span>
         <div>
-          <span className="profile-eyebrow">ShelfStream account ready</span>
+          <span className="profile-eyebrow">Shelf account ready</span>
           <h2>Welcome, {accountName}</h2>
-          <p>Join a server with an invitation, or claim a ShelfStream server you host. Your account and a server’s private library access are intentionally separate.</p>
+          <p>Join a server with an invitation, or claim a Shelf server you host. Your account and a server’s private library access are intentionally separate.</p>
         </div>
       </div>
       {pendingInvitations.length ? (
@@ -1946,7 +1946,7 @@ function ServerOnboarding({
           <h3>Invitations waiting for you</h3>
           {pendingInvitations.map((invitation) => (
             <article className="pending-invite-card" key={invitation.id}>
-              <div><strong>{invitation.serverName || "ShelfStream Server"}</strong><span>{invitation.role} access · expires {formatShortDate(invitation.expiresAt)}</span></div>
+              <div><strong>{invitation.serverName || "Shelf Server"}</strong><span>{invitation.role} access · expires {formatShortDate(invitation.expiresAt)}</span></div>
               <span>Open the invitation link to accept securely.</span>
             </article>
           ))}
@@ -1993,7 +1993,7 @@ function ServerAccessPanel({
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Add or join a server">
       <section className="modal-panel server-access-panel">
         <div className="modal-heading">
-          <div><span className="profile-eyebrow">My servers</span><h2>Add or join a server</h2><p>One ShelfStream account can connect to any server you own or have been invited to.</p></div>
+          <div><span className="profile-eyebrow">My servers</span><h2>Add or join a server</h2><p>One Shelf account can connect to any server you own or have been invited to.</p></div>
           <button type="button" className="icon-button" title="Close" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="connected-server-list">
@@ -2294,7 +2294,7 @@ function SendToKindleDialog({
             {!settings?.deliveryConfigured ? (
               <div className="kindle-warning">
                 <strong>Email delivery is not configured</strong>
-                <span>An administrator must configure ShelfStream’s SMTP settings before EPUBs can be sent.</span>
+                <span>An administrator must configure Shelf’s SMTP settings before EPUBs can be sent.</span>
               </div>
             ) : null}
 
@@ -2317,7 +2317,7 @@ function SendToKindleDialog({
                 autoFocus
                 onChange={(event) => setKindleEmail(event.target.value)}
               />
-              <small>This address is saved only to your ShelfStream account for future sends.</small>
+              <small>This address is saved only to your Shelf account for future sends.</small>
             </label>
 
             {settings?.senderEmail ? (
@@ -3097,7 +3097,7 @@ function ServerSettingsPanel({
 
         <section className="server-settings-section server-claim-section">
           <div className="server-settings-heading">
-            <div><h3>Host setup code</h3><p>Use a temporary code to attach this machine to another ShelfStream account service. Generating a code does not change ownership until the claim is completed.</p></div>
+            <div><h3>Host setup code</h3><p>Use a temporary code to attach this machine to another Shelf account service. Generating a code does not change ownership until the claim is completed.</p></div>
           </div>
           {claimCode ? (
             <div className="server-claim-code"><code>{claimCode.code}</code><span>Expires {new Date(claimCode.expiresAt).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}</span><button type="button" className="secondary-button" onClick={() => void navigator.clipboard.writeText(claimCode.code)}><Copy size={16} />Copy code</button></div>
@@ -4889,7 +4889,7 @@ function AudiobookPlayer({
           onClose();
         }}>
           <span className="audiobook-mobile-close"><ChevronDown size={25} /></span>
-          <span className="audiobook-desktop-brand"><i><BookOpen size={24} /></i><strong>ShelfStream</strong></span>
+          <span className="audiobook-desktop-brand"><i><BookOpen size={24} /></i><strong>Shelf</strong></span>
         </button>
         <nav className="audiobook-pocket-tabs" aria-label="Audiobook player sections">
           {(["playing", "details", "bookmarks"] as const).map((tab) => (

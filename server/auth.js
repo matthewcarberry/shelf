@@ -140,7 +140,7 @@ async function issueMobileToken(store, user, deviceName, context = null) {
   const expiresAt = new Date(Date.now() + MOBILE_TOKEN_TTL_MS).toISOString();
   await store.saveMobileToken(hashToken(token), {
     userId: user.id,
-    deviceName: String(deviceName || "ShelfStream mobile").trim().slice(0, 120),
+    deviceName: String(deviceName || "Shelf mobile").trim().slice(0, 120),
     createdAt: new Date().toISOString(),
     expiresAt,
     context

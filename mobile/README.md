@@ -1,6 +1,6 @@
-# ShelfStream Mobile
+# Shelf Mobile
 
-ShelfStream Mobile is the shared React Native client for iOS and Android. It connects to the existing self-hosted ShelfStream server and provides:
+Shelf Mobile is the shared React Native client for iOS and Android. It connects to the existing self-hosted Shelf server and provides:
 
 - separate native Books and Audiobooks libraries
 - native background audiobook playback with lock-screen controls
@@ -8,15 +8,15 @@ ShelfStream Mobile is the shared React Native client for iOS and Android. It con
 - server-synced playback position, including progress posted by the native player while the UI is not running
 - 15-second rewind, 30-second forward, chapter controls, and 0.5x-3x speed in 0.05 increments
 - complete-audiobook downloads into app-private device storage for offline playback
-- the full authenticated ShelfStream web interface for adding titles, EPUB/PDF reading, metadata, covers, ratings, users, and Send to Kindle
+- the full authenticated Shelf web interface for adding titles, EPUB/PDF reading, metadata, covers, ratings, users, and Send to Kindle
 - credentials in the iOS Keychain or Android Keystore-backed credential storage; media URLs use expiring bearer authorization headers
 - one account with a server directory, encrypted per-server sessions, and signed-ticket switching among every server the account owns or has joined
 
 ## Server requirement
 
-The mobile app requires the mobile authentication and progress endpoints in the adjacent ShelfStream server source. Deploy the root application before testing the client.
+The mobile app requires the mobile authentication and progress endpoints in the adjacent Shelf server source. Deploy the root application before testing the client.
 
-The default coordination endpoint is `https://shelf-stream.com`. A different HTTPS ShelfStream endpoint can be entered on the login screen. After login, the More screen lists every available server and switches by exchanging a short-lived, server-scoped ticket at the destination node; successful per-server sessions are retained in encrypted device storage. iOS permits local network discovery but intentionally does not allow arbitrary insecure HTTP traffic. Android debug builds can use HTTP; production should use HTTPS.
+The default coordination endpoint is `https://shelf-stream.com`. A different HTTPS Shelf endpoint can be entered on the login screen. After login, the More screen lists every available server and switches by exchanging a short-lived, server-scoped ticket at the destination node; successful per-server sessions are retained in encrypted device storage. iOS permits local network discovery but intentionally does not allow arbitrary insecure HTTP traffic. Android debug builds can use HTTP; production should use HTTPS.
 
 ## Development
 
@@ -63,7 +63,7 @@ The entitlement is intentionally not enabled in the checked-in development signi
 
 ## Android Auto
 
-The Android manifest declares a media app and the native player supplies an exported Media3 `MediaLibraryService`. ShelfStream publishes an Audiobooks browse category containing every title and its chapters. The car host renders the driver-safe UI and invokes native play, pause, seek, previous/next chapter, and skip controls without relying on the React Native runtime.
+The Android manifest declares a media app and the native player supplies an exported Media3 `MediaLibraryService`. Shelf publishes an Audiobooks browse category containing every title and its chapters. The car host renders the driver-safe UI and invokes native play, pause, seek, previous/next chapter, and skip controls without relying on the React Native runtime.
 
 Test using the Android Auto Desktop Head Unit after installing a debug build on an Android phone. A release build must use a private release keystore; the generated template's debug key must not be used for store submission.
 
@@ -73,4 +73,4 @@ The Offline mode switch downloads every chapter into the app's private documents
 
 ## Audio library license
 
-`@rntp/player` v5 is free for non-commercial use. Commercial distribution of ShelfStream Mobile requires a paid React Native Track Player license. Review `node_modules/@rntp/player/license.txt` before publishing to either app store.
+`@rntp/player` v5 is free for non-commercial use. Commercial distribution of Shelf Mobile requires a paid React Native Track Player license. Review `node_modules/@rntp/player/license.txt` before publishing to either app store.

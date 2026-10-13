@@ -58,7 +58,7 @@ function ShelfStreamMobile() {
       setPlatform(nextPlatform);
       updateAutomotiveLibrary(session, next).catch(() => undefined);
     } catch (error) {
-      Alert.alert('Unable to refresh ShelfStream', error instanceof Error ? error.message : 'Please try again.');
+      Alert.alert('Unable to refresh Shelf', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setRefreshing(false);
     }
@@ -132,7 +132,7 @@ function ShelfStreamMobile() {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <StatusBar barStyle="light-content" />
-        <View style={styles.webHeader}><Pressable onPress={() => { setFullApp(false); setFullAppBookId(null); }} style={styles.done}><Text style={styles.doneText}>Done</Text></Pressable><Text style={styles.webTitle}>ShelfStream</Text><View style={styles.done} /></View>
+        <View style={styles.webHeader}><Pressable onPress={() => { setFullApp(false); setFullAppBookId(null); }} style={styles.done}><Text style={styles.doneText}>Done</Text></Pressable><Text style={styles.webTitle}>Shelf</Text><View style={styles.done} /></View>
         <WebAppScreen session={session} bookId={fullAppBookId} />
       </SafeAreaView>
     );

@@ -16,17 +16,17 @@
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>
-  <Config Name="WebUI Port" Target="3000" Default="9191" Mode="tcp" Description="ShelfStream web interface port." Type="Port" Display="always" Required="true" Mask="false">9191</Config>
+  <Config Name="WebUI Port" Target="3000" Default="9191" Mode="tcp" Description="Shelf web interface port." Type="Port" Display="always" Required="true" Mask="false">9191</Config>
   <Config Name="Library" Target="/library" Default="/mnt/user/media/books" Mode="rw" Description="Ebook and audiobook library." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/media/books</Config>
-  <Config Name="Application Data" Target="/data" Default="/mnt/user/appdata/shelfstream" Mode="rw" Description="ShelfStream database and application data." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/shelfstream</Config>
+  <Config Name="Application Data" Target="/data" Default="/mnt/user/appdata/shelfstream" Mode="rw" Description="Shelf database and application data." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/shelfstream</Config>
   <Config Name="Application Port" Target="PORT" Default="3000" Mode="" Description="Internal application port." Type="Variable" Display="advanced" Required="true" Mask="false">3000</Config>
-  <Config Name="Server Name" Target="SERVER_NAME" Default="ShelfStream" Mode="" Description="Name shown to clients when this server is claimed or discovered." Type="Variable" Display="always" Required="true" Mask="false">ShelfStream</Config>
-  <Config Name="Public URL" Target="PUBLIC_URL" Default="https://shelf-stream.com" Mode="" Description="Verified HTTPS address used by ShelfStream account clients and server switching." Type="Variable" Display="always" Required="true" Mask="false">https://shelf-stream.com</Config>
+  <Config Name="Server Name" Target="SERVER_NAME" Default="Shelf" Mode="" Description="Name shown to clients when this server is claimed or discovered." Type="Variable" Display="always" Required="true" Mask="false">Shelf</Config>
+  <Config Name="Public URL" Target="PUBLIC_URL" Default="https://shelf-stream.com" Mode="" Description="Verified HTTPS address used by Shelf account clients and server switching." Type="Variable" Display="always" Required="true" Mask="false">https://shelf-stream.com</Config>
   <Config Name="Library Directory" Target="LIBRARY_DIR" Default="/library" Mode="" Description="Library path inside the container." Type="Variable" Display="advanced" Required="true" Mask="false">/library</Config>
   <Config Name="Data Directory" Target="DATA_DIR" Default="/data" Mode="" Description="Application data path inside the container." Type="Variable" Display="advanced" Required="true" Mask="false">/data</Config>
   <Config Name="Online Dictionary" Target="ONLINE_DICTIONARY" Default="true" Mode="" Description="Enable online dictionary lookup." Type="Variable" Display="advanced" Required="true" Mask="false">true</Config>
-  <Config Name="Authentication" Target="AUTH_ENABLED" Default="true" Mode="" Description="Require ShelfStream authentication." Type="Variable" Display="always" Required="true" Mask="false">true</Config>
-  <Config Name="Application Username" Target="APP_USERNAME" Default="admin" Mode="" Description="Initial ShelfStream administrator username." Type="Variable" Display="always" Required="true" Mask="false">admin</Config>
+  <Config Name="Authentication" Target="AUTH_ENABLED" Default="true" Mode="" Description="Require Shelf authentication." Type="Variable" Display="always" Required="true" Mask="false">true</Config>
+  <Config Name="Application Username" Target="APP_USERNAME" Default="admin" Mode="" Description="Initial Shelf administrator username." Type="Variable" Display="always" Required="true" Mask="false">admin</Config>
   <Config Name="Application Password" Target="APP_PASSWORD" Default="" Mode="" Description="Initial administrator password when a password hash is not supplied." Type="Variable" Display="always" Required="false" Mask="true"></Config>
   <Config Name="Application Password Hash" Target="APP_PASSWORD_HASH" Default="" Mode="" Description="Preferred hashed administrator password." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
   <Config Name="Trust Proxy" Target="TRUST_PROXY" Default="false" Mode="" Description="Trust reverse-proxy forwarding headers." Type="Variable" Display="advanced" Required="true" Mask="false">false</Config>
@@ -40,6 +40,6 @@
   <Config Name="SMTP Secure" Target="SMTP_SECURE" Default="false" Mode="" Description="Use an implicit TLS SMTP connection." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
   <Config Name="SMTP Username" Target="SMTP_USER" Default="" Mode="" Description="Outgoing mail username." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="SMTP Password" Target="SMTP_PASS" Default="" Mode="" Description="Outgoing mail password." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
-  <Config Name="Email From" Target="EMAIL_FROM" Default="" Mode="" Description="Sender address for ShelfStream email." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Email From" Target="EMAIL_FROM" Default="" Mode="" Description="Sender address for Shelf email." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="Kindle Attachment Limit" Target="KINDLE_MAX_ATTACHMENT_MB" Default="25" Mode="" Description="Maximum Send to Kindle attachment size in MB." Type="Variable" Display="advanced" Required="true" Mask="false">25</Config>
 </Container>

@@ -521,7 +521,7 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
       if (!response.ok) {
         throw new Error(httpErrorMessage(response.status));
       }
-      throw new Error("ShelfStream returned an unreadable response");
+      throw new Error("Shelf returned an unreadable response");
     }
   }
 
@@ -538,7 +538,7 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
 
 function httpErrorMessage(status: number): string {
   if (status === 413) return "The selected files are too large for the server upload limit";
-  if (status === 502) return "ShelfStream could not reach the library server";
+  if (status === 502) return "Shelf could not reach the library server";
   if (status === 504) return "The audiobook upload took too long to process; the files may still have been added";
   return `Request failed with ${status}`;
 }
