@@ -1,13 +1,13 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>shelfstream</Name>
-  <Repository>shelfstream-src-shelfstream:latest</Repository>
-  <Registry/>
+  <Repository>ghcr.io/matthewcarberry/shelf:latest</Repository>
+  <Registry>https://github.com/matthewcarberry/shelf/pkgs/container/shelf</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support/>
+  <Support>https://github.com/matthewcarberry/shelf/issues</Support>
   <Project>https://shelf-stream.com</Project>
   <Overview>Self-hosted ebook and audiobook library, reader, and player.</Overview>
   <Category>MediaServer:Books</Category>
