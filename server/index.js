@@ -50,7 +50,10 @@ await ensureStorage(paths);
 await store.init();
 const serverIdentity = store.getPublicServerIdentity();
 const storageInfo = store.getStorageInfo();
-const serverName = String(process.env.SERVER_NAME || os.hostname()).trim() || "Shelf Server";
+// Servers configured before the rename still pass the old product name; show it as Shelf.
+const LEGACY_SERVER_NAMES = new Map([["shelfstream", "Shelf"], ["shelfstream server", "Shelf Server"]]);
+const configuredServerName = String(process.env.SERVER_NAME || os.hostname()).trim() || "Shelf Server";
+const serverName = LEGACY_SERVER_NAMES.get(configuredServerName.toLowerCase()) || configuredServerName;
 const auth = createAuth(store);
 await auth.init();
 const platform = new PlatformService(store, {
@@ -1204,8 +1207,15 @@ app.get("/api/dictionary", async (req, res, next) => {
 });
 
 if (fsSync.existsSync(distDir)) {
-  app.use(express.static(distDir));
+  // index.html and sw.js must revalidate so a deploy reaches open browsers; hashed assets can cache.
+  const revalidate = (res) => res.setHeader("Cache-Control", "no-cache");
+  app.use(express.static(distDir, {
+    setHeaders: (res, filePath) => {
+      if (/\.html$|[\\/]sw\.js$/.test(filePath)) revalidate(res);
+    }
+  }));
   app.get(/.*/, (_req, res) => {
+    revalidate(res);
     res.sendFile(path.join(distDir, "index.html"));
   });
 }

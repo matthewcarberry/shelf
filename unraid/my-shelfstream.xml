@@ -12,7 +12,7 @@
   <Overview>Self-hosted ebook and audiobook library, reader, and player.</Overview>
   <Category>MediaServer:Books</Category>
   <WebUI>http://[IP]:[PORT:3000]</WebUI>
-  <Icon>https://shelf-stream.com/favicon.svg</Icon>
+  <Icon>https://raw.githubusercontent.com/matthewcarberry/shelf/main/unraid/shelf-icon.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>
