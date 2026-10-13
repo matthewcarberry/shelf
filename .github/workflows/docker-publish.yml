@@ -10,7 +10,8 @@ on:
 
 concurrency:
   group: docker-publish-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a main or tag run part-way, or a release could be tagged without its GitHub release.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REGISTRY: ghcr.io
@@ -20,10 +21,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v4
+
+      # A push to main releases package.json's version when it has no tag yet: bump the
+      # version in a pull request and merging it tags vX.Y.Z and publishes the release.
+      - name: Pick release version
+        id: release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "$tag already exists, so this push only updates latest."
+          else
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: docker/setup-buildx-action@v3
 
@@ -45,6 +59,8 @@ jobs:
             type=sha,format=short
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.tag }},enable=${{ steps.release.outputs.tag != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }},enable=${{ steps.release.outputs.tag != '' }}
           labels: |
             org.opencontainers.image.title=Shelf
             org.opencontainers.image.description=Self-hosted ebook and audiobook library, reader, and player.
@@ -60,3 +76,28 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Tags created with GITHUB_TOKEN don't start another run, so the image above is the only build.
+      - name: Tag the release
+        id: tag
+        if: steps.release.outputs.tag != ''
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          if ! git push origin "refs/tags/$TAG"; then
+            # Someone pushed the same tag by hand a moment ago; that push publishes it.
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+              echo "$TAG was just pushed by someone else, so there is nothing to release."
+              exit 0
+            fi
+            exit 1
+          fi
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create the GitHub release
+        if: steps.tag.outputs.created == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          generate_release_notes: true

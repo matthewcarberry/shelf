@@ -34,7 +34,7 @@ For local testing without Docker, copied or uploaded books go to `runtime/librar
 
 ## Docker
 
-Every push to `main` builds the image and publishes it to GitHub Container Registry as `ghcr.io/matthewcarberry/shelf:latest` (plus `sha-<commit>` tags, and version tags such as `0.1.0` when a `v0.1.0` git tag is pushed). Compose pulls that image:
+Every push to `main` builds the image and publishes it to GitHub Container Registry as `ghcr.io/matthewcarberry/shelf:latest` (plus `sha-<commit>` tags). To release a version, bump `version` in `package.json` in a pull request. When it merges, the same build also tags the commit (for example `v0.1.2`), publishes the image as `0.1.2` and `0.1`, and creates a GitHub release. Pushes that keep an already-tagged version only update `latest`, and pushing a `v*` tag by hand still publishes that version. Compose pulls that image:
 
 ```bash
 APP_PASSWORD="use-a-long-random-password" docker compose up -d
