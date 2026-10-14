@@ -201,7 +201,8 @@ const LIBRARY_SORT_MODES = new Set<LibrarySortMode>(["recent", "title", "author"
 const LIBRARY_LAYOUT_MODES = new Set<LibraryLayoutMode>(["grid", "list", "compact"]);
 type LibraryViewType = "ebooks" | "audiobooks";
 type ListeningSession = { bookId: string; reader: ReaderInfo; progress: ProgressState | null; autoPlay: boolean };
-type AudioSeekRequest = { trackIndex: number; trackTime: number; stamp: number };
+type AudioSeekRequest = { trackIndex: number; trackTime: number; play: boolean; stamp: number };
+type AudioPlayerControls = { applyReadState: (read: boolean) => void };
 type AudioNote = { note: string; label: string; locator: string; percent: number };
 
 // Audiobook positions are stored as "audio:<track index>:<seconds into the track>".
@@ -340,6 +341,9 @@ export function App() {
   const activityPercentRef = useRef(0);
   const mobileOpenBookHandledRef = useRef<string | null>(null);
   const restoredListeningRef = useRef(false);
+  const listeningControlsRef = useRef<AudioPlayerControls | null>(null);
+  // updatedAt of the newest server position this tab has loaded or saved for the bar's book.
+  const listeningSyncedAtRef = useRef("");
 
   const activeBook = useMemo(
     () => books.find((book) => book.id === activeBookId) || null,
@@ -457,7 +461,7 @@ export function App() {
       const target = parseAudioLocator(locator);
       if (listening?.bookId === bookId) {
         if (target) {
-          setSeekRequest({ ...target, stamp: Date.now() });
+          setSeekRequest({ ...target, play: true, stamp: Date.now() });
         } else {
           setPlayRequest((value) => value + 1);
         }
@@ -477,12 +481,16 @@ export function App() {
           book.id === bookId ? { ...book, progress: resolvedProgress } : book
         ));
         listeningProgressRef.current = resolvedProgress;
-        // Jumping to a note or bookmark starts from that spot instead of the saved position.
+        listeningSyncedAtRef.current = resolvedProgress?.updatedAt || "";
+        // Jumping to a note or bookmark starts from that spot instead of the saved position,
+        // and a finished book starts over.
         const startAt = target && resolvedProgress
           ? { ...resolvedProgress, ...target, currentTime: null }
           : target
             ? { percent: 0, locator: locator || null, page: null, totalPages: null, currentTime: null, duration: null, ...target }
-            : resolvedProgress;
+            : (resolvedProgress?.percent || 0) >= 0.995
+              ? null
+              : resolvedProgress;
         setListening({ bookId, reader: info, progress: startAt, autoPlay: true });
       } catch (error) {
         handleError(error, "Unable to open title");
@@ -499,6 +507,11 @@ export function App() {
       return;
     }
     restoredListeningRef.current = true;
+    // A link to an audiobook (?openBook=) opens and plays that book instead.
+    const linkedBookId = new URLSearchParams(window.location.search).get("openBook");
+    if (linkedBookId && books.some((book) => book.id === linkedBookId && book.mediaType === "audiobook")) {
+      return;
+    }
     const lastListened = books
       .filter((book) => book.mediaType === "audiobook" && book.progress?.updatedAt && !isBookRead(book))
       .sort((a, b) => String(b.progress?.updatedAt).localeCompare(String(a.progress?.updatedAt)))[0];
@@ -516,6 +529,7 @@ export function App() {
             return current;
           }
           listeningProgressRef.current = resolvedProgress;
+          listeningSyncedAtRef.current = resolvedProgress?.updatedAt || "";
           return { bookId: lastListened.id, reader: info, progress: resolvedProgress, autoPlay: false };
         });
       })
@@ -724,13 +738,52 @@ export function App() {
       listeningProgressTimerRef.current = window.setTimeout(() => {
         listeningProgressTimerRef.current = null;
         listeningPendingSaveRef.current = null;
-        void saveProgress(listeningBookId, progress).catch((error) =>
-          handleError(error, "Unable to save progress")
-        );
+        void saveProgress(listeningBookId, progress)
+          .then((saved) => {
+            if (saved.updatedAt && saved.updatedAt > listeningSyncedAtRef.current) {
+              listeningSyncedAtRef.current = saved.updatedAt;
+            }
+          })
+          .catch((error) => handleError(error, "Unable to save progress"));
       }, 450);
     },
     [handleError, listeningBookId]
   );
+
+  // While the bar is paused, pick up a newer position saved on another device (such as the
+  // phone app) when you come back to this tab, so pressing play doesn't rewind it.
+  useEffect(() => {
+    if (!listeningBookId || listeningPlaying) {
+      return;
+    }
+    const bookId = listeningBookId;
+    let cancelled = false;
+    const syncFromServer = () => {
+      if (document.visibilityState !== "visible" || listeningProgressTimerRef.current) {
+        return;
+      }
+      void getReaderInfo(bookId)
+        .then((info) => {
+          const latest = info.progress || info.book.progress || null;
+          const target = parseAudioLocator(latest?.locator);
+          if (cancelled || !latest?.updatedAt || !target || latest.updatedAt <= listeningSyncedAtRef.current) {
+            return;
+          }
+          listeningSyncedAtRef.current = latest.updatedAt;
+          listeningProgressRef.current = latest;
+          setBooks((items) => items.map((book) => (book.id === bookId ? { ...book, progress: latest } : book)));
+          setSeekRequest({ ...target, play: false, stamp: Date.now() });
+        })
+        .catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", syncFromServer);
+    window.addEventListener("focus", syncFromServer);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", syncFromServer);
+      window.removeEventListener("focus", syncFromServer);
+    };
+  }, [listeningBookId, listeningPlaying]);
 
   const applyBookProgress = useCallback(
     (bookId: string, progress: ProgressState) => {
@@ -764,6 +817,10 @@ export function App() {
         listeningProgressTimerRef.current = null;
         listeningPendingSaveRef.current = null;
       }
+      // If it's the book in the player bar, pause it there and stop it saving its old spot.
+      if (bookId === listeningBookId) {
+        listeningControlsRef.current?.applyReadState(read);
+      }
 
       try {
         const progress = await saveProgress(bookId, {
@@ -777,12 +834,15 @@ export function App() {
           trackTime: read ? null : 0
         });
         applyBookProgress(bookId, progress);
+        if (bookId === listeningBookId && progress.updatedAt) {
+          listeningSyncedAtRef.current = progress.updatedAt;
+        }
         void refreshProfile().catch(() => undefined);
       } catch (error) {
         handleError(error, read ? "Unable to mark book as read" : "Unable to mark book as unread");
       }
     },
-    [activeBookId, applyBookProgress, books, handleError, refreshProfile]
+    [activeBookId, applyBookProgress, books, handleError, listeningBookId, refreshProfile]
   );
 
   const updatePreferences = useCallback(
@@ -1117,6 +1177,9 @@ export function App() {
     }
     mobileOpenBookHandledRef.current = bookId;
     handleReadBook(bookId);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("openBook");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   }, [books, handleReadBook]);
 
   const handleUploadBooks = async (files: File[]) => {
@@ -1750,6 +1813,7 @@ export function App() {
               onSetReadState={(read) => void handleSetBookReadState(listening.bookId, read)}
               onClose={handleStopListening}
               onUsage={(mediaType, seconds) => void handleProfileUsage(mediaType, seconds)}
+              controlsRef={listeningControlsRef}
             />
           </div>
         ) : null}
@@ -4977,7 +5041,8 @@ function AudiobookPlayer({
   onSetReadState,
   onOpenDetails,
   onClose,
-  onUsage
+  onUsage,
+  controlsRef
 }: {
   book: Book;
   tracks: ReaderInfo["audioTracks"];
@@ -4999,6 +5064,8 @@ function AudiobookPlayer({
   onOpenDetails?: () => void;
   onClose: () => void;
   onUsage: (mediaType: MediaType, seconds: number) => void;
+  // Lets Shelf pause and reposition the player when the book is marked read or unread elsewhere.
+  controlsRef?: React.MutableRefObject<AudioPlayerControls | null>;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
@@ -5012,7 +5079,10 @@ function AudiobookPlayer({
   const barToolsRef = useRef<HTMLDivElement | null>(null);
   const restoredRef = useRef(false);
   const lastEmitRef = useRef(0);
-  const latestProgressRef = useRef<ProgressState | null>(progress);
+  // The newest position heard while playing; saved on unmount only if it hasn't been saved yet.
+  const latestProgressRef = useRef<ProgressState | null>(null);
+  const unsavedProgressRef = useRef(false);
+  const applyReadStateRef = useRef<(read: boolean) => void>(() => undefined);
   const [trackIndex, setTrackIndex] = useState(() => initialAudioTrack(progress, tracks));
   const [trackTime, setTrackTime] = useState(progress?.trackTime || 0);
   const [playing, setPlaying] = useState(false);
@@ -5029,6 +5099,8 @@ function AudiobookPlayer({
     const stored = Number(saved);
     return Number.isFinite(stored) && stored >= 0 && stored <= 1 ? stored : 1;
   });
+  const [muted, setMuted] = useState(false);
+  const [volumeAdjustable] = useState(canAdjustVolume);
   const [durations, setDurations] = useState(() =>
     tracks.map((track) => track.durationSeconds || 0)
   );
@@ -5056,7 +5128,7 @@ function AudiobookPlayer({
       return;
     }
     lastSeekStampRef.current = seekRequest.stamp;
-    selectTrackRef.current?.(seekRequest.trackIndex, seekRequest.trackTime, true);
+    selectTrackRef.current?.(seekRequest.trackIndex, seekRequest.trackTime, seekRequest.play);
   }, [seekRequest]);
 
   useEffect(() => {
@@ -5064,6 +5136,19 @@ function AudiobookPlayer({
   }, [onPlayingChange, playing]);
 
   useEffect(() => () => onPlayingChange(false), [onPlayingChange]);
+
+  useEffect(() => {
+    if (!controlsRef) {
+      return;
+    }
+    const controls: AudioPlayerControls = { applyReadState: (read) => applyReadStateRef.current(read) };
+    controlsRef.current = controls;
+    return () => {
+      if (controlsRef.current === controls) {
+        controlsRef.current = null;
+      }
+    };
+  }, [controlsRef]);
 
   useEffect(() => {
     if (!barMenu) {
@@ -5140,13 +5225,14 @@ function AudiobookPlayer({
       totalPages: null
     };
     latestProgressRef.current = next;
+    unsavedProgressRef.current = false;
     lastEmitRef.current = Date.now();
     onProgress(next);
   }, [durations, onProgress, totalDuration, trackIndex, trackTime, tracks.length]);
 
   useEffect(() => {
     return () => {
-      if (latestProgressRef.current && !suppressProgressRef.current) {
+      if (latestProgressRef.current && unsavedProgressRef.current && !suppressProgressRef.current) {
         onProgress(latestProgressRef.current);
       }
     };
@@ -5165,6 +5251,13 @@ function AudiobookPlayer({
       audioRef.current.volume = volume;
     }
   }, [volume]);
+
+  // Mute with `muted` rather than volume 0: iPhone and iPad Safari ignore volume changes.
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.muted = muted;
+    }
+  }, [muted]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator) || !track) {
@@ -5225,6 +5318,30 @@ function AudiobookPlayer({
     const audio = audioRef.current;
     if (!audio) {
       return;
+    }
+    const localDuration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : durations[trackIndex] || 0;
+    const knownDurations = durations.map((duration, index) => (index === trackIndex && localDuration > 0 ? localDuration : duration));
+    if (knownDurations.every((duration) => duration > 0)) {
+      // Skip by the full amount even when it crosses more than one chapter.
+      const bookDuration = knownDurations.reduce((total, duration) => total + duration, 0);
+      const before = knownDurations.slice(0, trackIndex).reduce((total, duration) => total + duration, 0);
+      const bookTarget = clamp(before + audio.currentTime + seconds, 0, bookDuration);
+      let offset = 0;
+      for (let index = 0; index < knownDurations.length; index += 1) {
+        if (bookTarget < offset + knownDurations[index] || index === knownDurations.length - 1) {
+          const local = bookTarget - offset;
+          if (index === trackIndex) {
+            audio.currentTime = local;
+            setTrackTime(local);
+            emitProgress(local);
+          } else {
+            // Stay just inside the chapter so it doesn't load and end straight away.
+            selectTrack(index, Math.min(local, Math.max(0, knownDurations[index] - 1)), playing);
+          }
+          return;
+        }
+        offset += knownDurations[index];
+      }
     }
     let target = audio.currentTime + seconds;
     if (target < 0 && trackIndex > 0) {
@@ -5299,6 +5416,7 @@ function AudiobookPlayer({
           const audio = event.currentTarget;
           audio.playbackRate = playbackRate;
           audio.volume = volume;
+          audio.muted = muted;
           if (Number.isFinite(audio.duration) && audio.duration > 0) {
             setDurations((items) => items.map((duration, index) => index === trackIndex ? audio.duration : duration));
           }
@@ -5328,6 +5446,11 @@ function AudiobookPlayer({
         onTimeUpdate={(event) => {
           const nextTime = event.currentTarget.currentTime;
           setTrackTime(nextTime);
+          // Seeks while paused (like resuming the saved spot on startup) aren't listening, so
+          // don't save them; that would overwrite a newer position from another device.
+          if (event.currentTarget.paused || suppressProgressRef.current) {
+            return;
+          }
           const nextDuration = event.currentTarget.duration;
           const knownTotal = durations.every((duration, index) => index === trackIndex ? nextDuration > 0 : duration > 0)
             ? durations.reduce((total, duration, index) => total + (index === trackIndex ? nextDuration : duration), 0)
@@ -5343,6 +5466,7 @@ function AudiobookPlayer({
             page: null,
             totalPages: null
           };
+          unsavedProgressRef.current = true;
           if (Date.now() - lastEmitRef.current >= 5000) {
             emitProgress(nextTime);
           }
@@ -5367,19 +5491,23 @@ function AudiobookPlayer({
       playAudio();
     }
   };
+  const silent = muted || volume === 0;
   const toggleMute = () => {
-    if (volume > 0) {
-      lastVolumeRef.current = volume;
-      setVolume(0);
-    } else {
+    if (!silent) {
+      setMuted(true);
+      return;
+    }
+    setMuted(false);
+    if (volume === 0) {
       setVolume(lastVolumeRef.current || 1);
     }
   };
   const toggleMenu = (menu: "speed" | "chapters" | "more") => {
     setBarMenu((current) => (current === menu ? null : menu));
   };
-  const setReadState = (nextRead: boolean) => {
-    setBarMenu(null);
+  // Called by Shelf (through controlsRef) whenever this book is marked read or unread,
+  // whether from this menu or from a book card elsewhere.
+  applyReadStateRef.current = (nextRead: boolean) => {
     // Stop saving the current spot (including the save the pause triggers) so it can't
     // overwrite the new read state. Saving resumes when playback does.
     suppressProgressRef.current = true;
@@ -5399,6 +5527,9 @@ function AudiobookPlayer({
       }
       setTrackTime(0);
     }
+  };
+  const setReadState = (nextRead: boolean) => {
+    setBarMenu(null);
     onSetReadState(nextRead);
     setNotice(nextRead ? "Marked as read." : "Marked as unread.");
   };
@@ -5501,19 +5632,29 @@ function AudiobookPlayer({
             </button>
           </div>
           <div className="player-bar-volume">
-            <button type="button" className="player-bar-tool" title={volume > 0 ? "Mute" : "Unmute"} aria-label={volume > 0 ? "Mute" : "Unmute"} onClick={toggleMute}>
-              {volume === 0 ? <VolumeX size={24} /> : volume < 0.5 ? <Volume1 size={24} /> : <Volume2 size={24} />}
+            <button type="button" className="player-bar-tool" title={silent ? "Unmute" : "Mute"} aria-label={silent ? "Unmute" : "Mute"} onClick={toggleMute}>
+              {silent ? <VolumeX size={24} /> : volume < 0.5 ? <Volume1 size={24} /> : <Volume2 size={24} />}
             </button>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={volume}
-              aria-label="Volume"
-              style={{ "--player-bar-progress": `${volume * 100}%` } as React.CSSProperties}
-              onChange={(event) => setVolume(Number(event.target.value))}
-            />
+            {/* iPhone and iPad only allow the hardware buttons to change volume. */}
+            {volumeAdjustable ? (
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={silent ? 0 : volume}
+                aria-label="Volume"
+                style={{ "--player-bar-progress": `${(silent ? 0 : volume) * 100}%` } as React.CSSProperties}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  setVolume(next);
+                  if (next > 0) {
+                    lastVolumeRef.current = next;
+                    setMuted(false);
+                  }
+                }}
+              />
+            ) : null}
           </div>
           <button
             type="button"
@@ -5680,6 +5821,21 @@ function ChapterListIcon({ size = 24 }: { size?: number }) {
       <path d="M2 6h13M2 12h13M2 18h13M18 6h4M18 12h4M18 18h4" />
     </svg>
   );
+}
+
+let volumeAdjustable: boolean | null = null;
+
+function canAdjustVolume() {
+  if (volumeAdjustable === null) {
+    try {
+      const probe = document.createElement("audio");
+      probe.volume = 0.5;
+      volumeAdjustable = Math.abs(probe.volume - 0.5) < 0.01;
+    } catch {
+      volumeAdjustable = false;
+    }
+  }
+  return volumeAdjustable;
 }
 
 function initialAudioTrack(progress: ProgressState | null, tracks: ReaderInfo["audioTracks"]) {
