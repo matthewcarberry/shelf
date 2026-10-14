@@ -314,6 +314,25 @@ export async function sendBookToKindle(
   });
 }
 
+export type CastLinks = {
+  expiresAt: string;
+  receiverAppId: string | null;
+  title: string;
+  author: string | null;
+  coverUrl: string | null;
+  progressUrl: string;
+  tracks: Array<{ index: number; title: string; durationSeconds: number | null; url: string; contentType: string }>;
+};
+
+export async function getCastConfig(): Promise<{ receiverAppId: string | null }> {
+  return request("/api/cast/config");
+}
+
+// Signed 24-hour links a Chromecast can play without Shelf's sign-in cookie.
+export async function createCastLinks(bookId: string): Promise<CastLinks> {
+  return request(`/api/books/${bookId}/cast`, { method: "POST" });
+}
+
 export async function saveProgress(bookId: string, progress: ProgressState): Promise<ProgressState> {
   const localProgress = rememberOfflineProgress(bookId, progress);
   try {
