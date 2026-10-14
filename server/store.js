@@ -37,7 +37,7 @@ const EMPTY_DB = {
 
 const SQLITE_FILENAME = "shelfstream.sqlite";
 const LEGACY_BACKUP_SUFFIX = ".pre-sqlite-backup";
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 5;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -298,6 +298,7 @@ export class SqliteStore {
     await this.queueSqliteWrite((sqlite) => {
       sqlite.prepare("DELETE FROM profile_usage WHERE user_id = ?").run(userId);
       sqlite.prepare("DELETE FROM read_list WHERE user_id = ?").run(userId);
+      sqlite.prepare("DELETE FROM libby_accounts WHERE user_id = ?").run(userId);
     });
     return true;
   }
@@ -552,6 +553,31 @@ export class SqliteStore {
       `).run(safeSeconds, now, userId);
     });
     return this.getProfileUsage(userId);
+  }
+
+  getLibbyAccount(userId) {
+    if (!this.sqlite) {
+      throw new Error("Shelf SQLite store is not initialized");
+    }
+    const row = this.sqlite.prepare("SELECT identity, linked_at FROM libby_accounts WHERE user_id = ?").get(userId);
+    return row ? { identity: row.identity, linkedAt: row.linked_at } : null;
+  }
+
+  async setLibbyAccount(userId, identity) {
+    const now = new Date().toISOString();
+    await this.queueSqliteWrite((sqlite) => {
+      sqlite.prepare(`
+        INSERT INTO libby_accounts (user_id, identity, linked_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET identity = excluded.identity, linked_at = excluded.linked_at
+      `).run(userId, identity, now);
+    });
+  }
+
+  async deleteLibbyAccount(userId) {
+    await this.queueSqliteWrite((sqlite) => {
+      sqlite.prepare("DELETE FROM libby_accounts WHERE user_id = ?").run(userId);
+    });
   }
 
   listReadList(userId) {
@@ -903,6 +929,16 @@ function applySchemaMigrations(sqlite) {
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           PRIMARY KEY (requester_account_id, addressee_account_id)
+        );
+      `
+    },
+    {
+      version: 5,
+      sql: `
+        CREATE TABLE libby_accounts (
+          user_id TEXT PRIMARY KEY,
+          identity TEXT NOT NULL,
+          linked_at TEXT NOT NULL
         );
       `
     }

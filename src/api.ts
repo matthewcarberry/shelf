@@ -8,6 +8,7 @@ import type {
   Highlight,
   KindleSendResult,
   KindleSettings,
+  LibbyStatus,
   MediaType,
   ConnectionTicket,
   PlatformOverview,
@@ -323,6 +324,25 @@ export type CastLinks = {
   progressUrl: string;
   tracks: Array<{ index: number; title: string; durationSeconds: number | null; url: string; contentType: string }>;
 };
+
+export async function getLibbyLoans(refresh = false): Promise<LibbyStatus & { books: Book[] }> {
+  return request<LibbyStatus & { books: Book[] }>(`/api/libby/loans${refresh ? "?refresh=1" : ""}`);
+}
+
+export async function getLibbyStatus(): Promise<LibbyStatus> {
+  return request<LibbyStatus>("/api/libby");
+}
+
+export async function linkLibby(code: string): Promise<LibbyStatus> {
+  return request<LibbyStatus>("/api/libby/link", {
+    method: "POST",
+    body: JSON.stringify({ code })
+  });
+}
+
+export async function unlinkLibby(): Promise<void> {
+  await request<void>("/api/libby/link", { method: "DELETE" });
+}
 
 export async function getCastConfig(): Promise<{ receiverAppId: string | null }> {
   return request("/api/cast/config");
