@@ -1006,10 +1006,9 @@ app.post("/api/books/:bookId/send-to-kindle", async (req, res, next) => {
   }
 });
 
-app.post("/api/library/scan", async (req, res, next) => {
+app.post("/api/library/scan", requireAdmin, async (req, res, next) => {
   try {
-    const books = await scanLibrary(store, paths);
-    await platform.reconcileBooks(books);
+    const books = await runLibraryScan();
     res.json({ books: books.map((book) => decoratePlatformBook(book, req.user.id)) });
   } catch (error) {
     next(error);
@@ -1604,11 +1603,26 @@ const httpServer = app.listen(port, "0.0.0.0", () => {
   void runInitialLibraryScan();
 });
 
+// One scan at a time: a second request while a scan is running waits for that
+// scan instead of walking the library again.
+let activeLibraryScan = null;
+function runLibraryScan() {
+  if (!activeLibraryScan) {
+    activeLibraryScan = (async () => {
+      const books = await scanLibrary(store, paths);
+      await platform.reconcileBooks(books);
+      return books;
+    })().finally(() => {
+      activeLibraryScan = null;
+    });
+  }
+  return activeLibraryScan;
+}
+
 async function runInitialLibraryScan() {
   initialLibraryScanStatus = "running";
   try {
-    const books = await scanLibrary(store, paths);
-    await platform.reconcileBooks(books);
+    const books = await runLibraryScan();
     initialLibraryScanStatus = "ready";
     console.log(`Library scan complete: ${books.length} titles`);
   } catch (error) {

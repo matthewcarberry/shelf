@@ -116,6 +116,7 @@ import {
   saveReview,
   savePreferences,
   savePlatformPreferences,
+  scanLibrary,
   saveProgress,
   sendBookToKindle,
   searchBookArtwork,
@@ -346,6 +347,7 @@ export function App() {
   const [kindleSending, setKindleSending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [libraryScanning, setLibraryScanning] = useState(false);
   const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null);
   const progressTimerRef = useRef<number | null>(null);
   const listeningProgressTimerRef = useRef<number | null>(null);
@@ -1551,6 +1553,21 @@ export function App() {
     }
   };
 
+  const handleLibraryScan = async () => {
+    if (libraryScanning) return;
+    setLibraryScanning(true);
+    setMessage("Scanning library files…");
+    try {
+      const scanned = await scanLibrary();
+      await Promise.all([refreshBooks(), refreshPlatform()]);
+      setMessage(`Library scan complete: ${scanned.length} titles.`);
+    } catch (error) {
+      handleError(error, "Unable to scan library files");
+    } finally {
+      setLibraryScanning(false);
+    }
+  };
+
   const handleLibrarySelect = (library: ShelfLibrary) => {
     leaveBookDetails();
     setActiveLibraryId(library.id);
@@ -1687,12 +1704,15 @@ export function App() {
               />
               <span className="sidebar-section-label">Libraries</span>
               {availableLibraries.map((library) => (
-                <SidebarNavButton
+                <SidebarLibraryItem
                   key={library.id}
                   active={activeLibraryId === library.id && activeLibraryType !== null}
                   icon={library.mediaType === "audiobook" ? <Headphones size={19} /> : <BookOpen size={19} />}
                   label={library.name}
+                  canScan={canManageServer}
+                  scanning={libraryScanning}
                   onClick={() => handleLibrarySelect(library)}
+                  onScan={() => void handleLibraryScan()}
                 />
               ))}
               <span className="sidebar-section-label">You</span>
@@ -2395,6 +2415,71 @@ function SidebarNavButton({
       <span className="sidebar-nav-icon">{icon}</span>
       <span className="sidebar-label">{label}</span>
     </button>
+  );
+}
+
+function SidebarLibraryItem({
+  active,
+  icon,
+  label,
+  canScan,
+  scanning,
+  onClick,
+  onScan
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  label: string;
+  canScan: boolean;
+  scanning: boolean;
+  onClick: () => void;
+  onScan: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  return (
+    <div
+      className={`sidebar-library-item ${menuOpen ? "is-menu-open" : ""}`}
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+          setMenuOpen(false);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          setMenuOpen(false);
+        }
+      }}
+    >
+      <SidebarNavButton active={active} icon={icon} label={label} onClick={onClick} />
+      {canScan ? (
+        <button
+          type="button"
+          className="sidebar-library-menu-button"
+          aria-label={`More actions for ${label}`}
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((value) => !value)}
+        >
+          {scanning ? <RefreshCw size={16} className="spin" /> : <MoreVertical size={16} />}
+        </button>
+      ) : null}
+      {canScan && menuOpen ? (
+        <div className="sidebar-library-menu" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            disabled={scanning}
+            onClick={() => {
+              setMenuOpen(false);
+              onScan();
+            }}
+          >
+            {scanning ? "Scanning…" : "Scan Library Files"}
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
