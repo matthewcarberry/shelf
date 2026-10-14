@@ -109,6 +109,8 @@ export interface ReaderPreferences {
   pageLayout: PageLayout;
   margin: ReaderMargin;
   kindleEmail: string;
+  skipForwardSeconds: number;
+  skipBackSeconds: number;
   progressDisplay: {
     chapterTime: boolean;
     pageInBook: boolean;
