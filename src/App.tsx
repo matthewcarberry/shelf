@@ -6,10 +6,12 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import {
   Activity,
+  Airplay,
   ArrowUpDown,
   Bookmark as BookmarkIcon,
   BookMarked,
   BookOpen,
+  Cast,
   CircleUserRound,
   ChevronDown,
   ChevronRight,
@@ -65,6 +67,7 @@ import {
   VolumeX,
   X
 } from "lucide-react";
+import { castControls, onCastSessionStarted, useAirPlay, useCast } from "./cast";
 import {
   AuthRequiredError,
   addBookmark,
@@ -5240,10 +5243,36 @@ function AudiobookPlayer({
   const [notePosition, setNotePosition] = useState<{ label: string; locator: string; percent: number } | null>(null);
   const [noteSaving, setNoteSaving] = useState(false);
 
+  const castState = useCast();
+  const casting = castState.connected;
+  // Read inside audio event handlers, which can fire after casting starts but before a re-render.
+  const castingRef = useRef(casting);
+  castingRef.current = casting;
+  const wasCastingRef = useRef(false);
+  const castPlayRef = useRef<() => void>(() => undefined);
+  const startCastingRef = useRef<() => void>(() => undefined);
+  // What the TV is playing, only when it's this book.
+  const remote = casting && castState.media?.bookId === book.id ? castState.media : null;
+  const airPlay = useAirPlay(audioRef);
+
   // Browsers can refuse playback that doesn't follow a click; stay paused instead of erroring.
   const playAudio = useCallback(() => {
+    if (castingRef.current) {
+      castPlayRef.current();
+      return;
+    }
     void audioRef.current?.play().catch(() => setPlaying(false));
   }, []);
+
+  const pauseAudio = useCallback(() => {
+    if (castingRef.current) {
+      castControls.pause();
+      return;
+    }
+    audioRef.current?.pause();
+  }, []);
+
+  useEffect(() => onCastSessionStarted(() => startCastingRef.current()), []);
 
   useEffect(() => {
     if (playRequest === lastPlayRequestRef.current) {
@@ -5312,6 +5341,12 @@ function AudiobookPlayer({
 
   useActiveUsageTimer(playing, "audiobook", onUsage, false);
 
+  useEffect(() => {
+    if (castingRef.current) {
+      castControls.setPlaybackRate(playbackRate);
+    }
+  }, [playbackRate]);
+
   const track = tracks[trackIndex] || tracks[0];
   const allDurationsKnown = durations.length > 0 && durations.every((duration) => duration > 0);
   const totalDuration = allDurationsKnown
@@ -5360,6 +5395,46 @@ function AudiobookPlayer({
     onProgress(next);
   }, [durations, onProgress, totalDuration, trackIndex, trackTime, tracks.length]);
 
+  // While casting, the bar follows the TV. The receiver saves progress itself; saving here too
+  // keeps Shelf's own progress display current while this tab is open.
+  useEffect(() => {
+    if (!remote) {
+      return;
+    }
+    if (remote.trackIndex !== trackIndex) {
+      pendingSeekRef.current = null;
+      pendingPlayRef.current = false;
+      restoredRef.current = true;
+      setTrackIndex(remote.trackIndex);
+    } else if (remote.playing && Date.now() - lastEmitRef.current >= 10000) {
+      emitProgress(remote.currentTime);
+    }
+    setTrackTime(remote.currentTime);
+    setPlaying(remote.playing);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remote?.trackIndex, remote?.currentTime, remote?.playing]);
+
+  // When casting stops, pick up here, paused, from where the TV was.
+  useEffect(() => {
+    if (casting) {
+      wasCastingRef.current = true;
+      return;
+    }
+    if (!wasCastingRef.current) {
+      return;
+    }
+    wasCastingRef.current = false;
+    setPlaying(false);
+    const audio = audioRef.current;
+    if (audio && audio.readyState >= 1) {
+      audio.currentTime = trackTime;
+    } else {
+      pendingSeekRef.current = trackTime;
+    }
+    emitProgress(trackTime);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [casting]);
+
   useEffect(() => {
     return () => {
       if (latestProgressRef.current && unsavedProgressRef.current && !suppressProgressRef.current) {
@@ -5400,7 +5475,7 @@ function AudiobookPlayer({
       artwork: book.coverUrl ? [{ src: book.coverUrl }] : []
     });
     navigator.mediaSession.setActionHandler("play", playAudio);
-    navigator.mediaSession.setActionHandler("pause", () => audioRef.current?.pause());
+    navigator.mediaSession.setActionHandler("pause", pauseAudio);
     navigator.mediaSession.setActionHandler("seekbackward", (details) => seekRelative(-(details.seekOffset || skipBackSeconds)));
     navigator.mediaSession.setActionHandler("seekforward", (details) => seekRelative(details.seekOffset || skipForwardSeconds));
     return () => {
@@ -5425,6 +5500,10 @@ function AudiobookPlayer({
     // Any explicit move (chapter, seek, note or bookmark jump) counts as listening again.
     suppressProgressRef.current = false;
     const boundedIndex = clamp(Math.round(nextIndex), 0, tracks.length - 1);
+    if (castingRef.current) {
+      castMoveTo(boundedIndex, Math.max(0, nextTime), autoPlay);
+      return;
+    }
     if (boundedIndex === trackIndex) {
       if (audioRef.current) {
         audioRef.current.currentTime = clamp(nextTime, 0, audioRef.current.duration || Number.MAX_SAFE_INTEGER);
@@ -5444,26 +5523,58 @@ function AudiobookPlayer({
     setTrackTime(Math.max(0, nextTime));
   };
 
-  function seekRelative(seconds: number) {
-    const audio = audioRef.current;
-    if (!audio) {
+  // Sends a move to the TV: a seek within the chapter it's playing, otherwise a reload at the new spot.
+  function castMoveTo(index: number, time: number, autoPlay: boolean) {
+    setTrackTime(time);
+    if (remote && remote.trackIndex === index) {
+      castControls.seek(time);
+      if (autoPlay && !remote.playing) {
+        castControls.playOrPause();
+      }
       return;
     }
-    const localDuration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : durations[trackIndex] || 0;
+    void castControls
+      .load({ bookId: book.id, trackIndex: index, time, play: autoPlay, playbackRate })
+      .catch(() => setNotice("Couldn't send this book to the TV."));
+  }
+
+  // The current chapter's position and length, from the TV while casting.
+  function mediaPosition() {
+    const audio = audioRef.current;
+    if (castingRef.current) {
+      return { time: trackTime, duration: remote?.duration || durations[trackIndex] || NaN };
+    }
+    return audio ? { time: audio.currentTime, duration: audio.duration } : null;
+  }
+
+  function seekWithinTrack(time: number) {
+    if (castingRef.current) {
+      castMoveTo(trackIndex, time, playing);
+    } else if (audioRef.current) {
+      audioRef.current.currentTime = time;
+    }
+    setTrackTime(time);
+    emitProgress(time);
+  }
+
+  function seekRelative(seconds: number) {
+    const position = mediaPosition();
+    if (!position) {
+      return;
+    }
+    const localDuration = Number.isFinite(position.duration) && position.duration > 0 ? position.duration : durations[trackIndex] || 0;
     const knownDurations = durations.map((duration, index) => (index === trackIndex && localDuration > 0 ? localDuration : duration));
     if (knownDurations.every((duration) => duration > 0)) {
       // Skip by the full amount even when it crosses more than one chapter.
       const bookDuration = knownDurations.reduce((total, duration) => total + duration, 0);
       const before = knownDurations.slice(0, trackIndex).reduce((total, duration) => total + duration, 0);
-      const bookTarget = clamp(before + audio.currentTime + seconds, 0, bookDuration);
+      const bookTarget = clamp(before + position.time + seconds, 0, bookDuration);
       let offset = 0;
       for (let index = 0; index < knownDurations.length; index += 1) {
         if (bookTarget < offset + knownDurations[index] || index === knownDurations.length - 1) {
           const local = bookTarget - offset;
           if (index === trackIndex) {
-            audio.currentTime = local;
-            setTrackTime(local);
-            emitProgress(local);
+            seekWithinTrack(local);
           } else {
             // Stay just inside the chapter so it doesn't load and end straight away.
             selectTrack(index, Math.min(local, Math.max(0, knownDurations[index] - 1)), playing);
@@ -5473,30 +5584,25 @@ function AudiobookPlayer({
         offset += knownDurations[index];
       }
     }
-    let target = audio.currentTime + seconds;
+    let target = position.time + seconds;
     if (target < 0 && trackIndex > 0) {
       const previousDuration = durations[trackIndex - 1] || 0;
       selectTrack(trackIndex - 1, Math.max(0, previousDuration + target), playing);
       return;
     }
-    if (Number.isFinite(audio.duration) && target >= audio.duration && trackIndex < tracks.length - 1) {
-      selectTrack(trackIndex + 1, target - audio.duration, playing);
+    if (Number.isFinite(position.duration) && target >= position.duration && trackIndex < tracks.length - 1) {
+      selectTrack(trackIndex + 1, target - position.duration, playing);
       return;
     }
-    target = clamp(target, 0, Number.isFinite(audio.duration) ? audio.duration : Number.MAX_SAFE_INTEGER);
-    audio.currentTime = target;
-    setTrackTime(target);
-    emitProgress(target);
+    target = clamp(target, 0, Number.isFinite(position.duration) ? position.duration : Number.MAX_SAFE_INTEGER);
+    seekWithinTrack(target);
   }
 
   const seekToPercent = (nextPercent: number) => {
     if (totalDuration <= 0 || !allDurationsKnown) {
-      const audio = audioRef.current;
-      if (audio && Number.isFinite(audio.duration)) {
-        const nextTime = audio.duration * nextPercent;
-        audio.currentTime = nextTime;
-        setTrackTime(nextTime);
-        emitProgress(nextTime);
+      const position = mediaPosition();
+      if (position && Number.isFinite(position.duration)) {
+        seekWithinTrack(position.duration * nextPercent);
       }
       return;
     }
@@ -5513,6 +5619,29 @@ function AudiobookPlayer({
   };
 
   selectTrackRef.current = selectTrack;
+
+  castPlayRef.current = () => {
+    if (remote) {
+      if (!remote.playing) {
+        castControls.playOrPause();
+      }
+      return;
+    }
+    // The TV is idle or playing something else: send this book from the current spot.
+    castMoveTo(trackIndex, trackTime, true);
+  };
+
+  // The person just picked a device: move what's in the bar to the TV.
+  startCastingRef.current = () => {
+    const audio = audioRef.current;
+    const time = audio?.currentTime ?? trackTime;
+    const wasPlaying = playing;
+    audio?.pause();
+    emitProgress(time);
+    void castControls
+      .load({ bookId: book.id, trackIndex, time, play: wasPlaying, playbackRate })
+      .catch(() => setNotice("Couldn't send this book to the TV."));
+  };
 
   const shareAudiobook = async () => {
     // Links straight to this book; anyone with an account on this server can open it.
@@ -5565,15 +5694,25 @@ function AudiobookPlayer({
             playAudio();
           }
         }}
-        onPlay={() => {
+        onPlay={(event) => {
+          if (castingRef.current) {
+            event.currentTarget.pause();
+            return;
+          }
           suppressProgressRef.current = false;
           setPlaying(true);
         }}
         onPause={() => {
+          if (castingRef.current) {
+            return;
+          }
           setPlaying(false);
           emitProgress();
         }}
         onTimeUpdate={(event) => {
+          if (castingRef.current) {
+            return;
+          }
           const nextTime = event.currentTarget.currentTime;
           setTrackTime(nextTime);
           // Seeks while paused (like resuming the saved spot on startup) aren't listening, so
@@ -5602,6 +5741,9 @@ function AudiobookPlayer({
           }
         }}
         onEnded={() => {
+          if (castingRef.current) {
+            return;
+          }
           if (trackIndex < tracks.length - 1) {
             selectTrack(trackIndex + 1, 0, true);
           } else {
@@ -5616,13 +5758,19 @@ function AudiobookPlayer({
   const chapterLabel = tracks.length > 1 ? track.title || `Chapter ${trackIndex + 1}` : "";
   const togglePlayback = () => {
     if (playing) {
-      audioRef.current?.pause();
+      pauseAudio();
     } else {
       playAudio();
     }
   };
-  const silent = muted || volume === 0;
+  // While casting, volume and mute control the TV.
+  const shownVolume = casting ? castState.volume : volume;
+  const silent = casting ? castState.muted || castState.volume === 0 : muted || volume === 0;
   const toggleMute = () => {
+    if (casting) {
+      castControls.toggleMute();
+      return;
+    }
     if (!silent) {
       setMuted(true);
       return;
@@ -5642,10 +5790,12 @@ function AudiobookPlayer({
     // overwrite the new read state. Saving resumes when playback does.
     suppressProgressRef.current = true;
     latestProgressRef.current = null;
-    audioRef.current?.pause();
+    pauseAudio();
     if (!nextRead) {
       // Unread starts the book over.
-      if (trackIndex === 0) {
+      if (castingRef.current) {
+        castMoveTo(0, 0, false);
+      } else if (trackIndex === 0) {
         if (audioRef.current) {
           audioRef.current.currentTime = 0;
         }
@@ -5664,7 +5814,7 @@ function AudiobookPlayer({
     setNotice(nextRead ? "Marked as read." : "Marked as unread.");
   };
   const openNote = () => {
-    const time = audioRef.current?.currentTime ?? trackTime;
+    const time = casting ? trackTime : audioRef.current?.currentTime ?? trackTime;
     const position = tracks.length > 1
       ? `${track.title || `Chapter ${trackIndex + 1}`} · ${formatAudioTime(time)}`
       : formatAudioTime(elapsedBeforeTrack + time);
@@ -5685,11 +5835,16 @@ function AudiobookPlayer({
       setNotice("Note saved to Notes & Highlights.");
     }
   };
+  const showCastButton = castState.supported && (castState.available || casting);
   const coverArt = <BookCover book={book} fit="contain" />;
   const titleText = (
     <>
       <strong>{book.title}</strong>
-      <span>{[book.author || "Unknown author", chapterLabel].filter(Boolean).join(" · ")}</span>
+      <span>
+        {casting
+          ? [castState.deviceName ? `Casting to ${castState.deviceName}` : "Casting", chapterLabel].filter(Boolean).join(" · ")
+          : [book.author || "Unknown author", chapterLabel].filter(Boolean).join(" · ")}
+      </span>
     </>
   );
 
@@ -5748,7 +5903,28 @@ function AudiobookPlayer({
           <button type="button" className="player-bar-tool player-bar-bookmark" title="Add bookmark" aria-label="Add bookmark" onClick={onBookmark}>
             <BookmarkIcon size={24} />
           </button>
-          {/* The cast button will go here once casting is built. */}
+          {showCastButton ? (
+            <button
+              type="button"
+              className={`player-bar-tool player-bar-cast ${casting ? "is-active" : ""}`}
+              title={casting ? `Casting to ${castState.deviceName || "TV"}` : "Cast"}
+              aria-label={casting ? `Casting to ${castState.deviceName || "TV"}. Choose device or stop casting` : "Cast to a device"}
+              onClick={castControls.requestSession}
+            >
+              <Cast size={24} />
+            </button>
+          ) : null}
+          {airPlay.available ? (
+            <button
+              type="button"
+              className={`player-bar-tool player-bar-airplay ${airPlay.active ? "is-active" : ""}`}
+              title="AirPlay"
+              aria-label="AirPlay"
+              onClick={airPlay.showPicker}
+            >
+              <Airplay size={24} />
+            </button>
+          ) : null}
           <div className="player-bar-menu player-bar-speed">
             <button
               type="button"
@@ -5763,7 +5939,7 @@ function AudiobookPlayer({
           </div>
           <div className="player-bar-volume">
             <button type="button" className="player-bar-tool" title={silent ? "Unmute" : "Mute"} aria-label={silent ? "Unmute" : "Mute"} onClick={toggleMute}>
-              {silent ? <VolumeX size={24} /> : volume < 0.5 ? <Volume1 size={24} /> : <Volume2 size={24} />}
+              {silent ? <VolumeX size={24} /> : shownVolume < 0.5 ? <Volume1 size={24} /> : <Volume2 size={24} />}
             </button>
             {/* iPhone and iPad only allow the hardware buttons to change volume. */}
             {volumeAdjustable ? (
@@ -5772,11 +5948,15 @@ function AudiobookPlayer({
                 min="0"
                 max="1"
                 step="0.05"
-                value={silent ? 0 : volume}
+                value={silent ? 0 : shownVolume}
                 aria-label="Volume"
-                style={{ "--player-bar-progress": `${(silent ? 0 : volume) * 100}%` } as React.CSSProperties}
+                style={{ "--player-bar-progress": `${(silent ? 0 : shownVolume) * 100}%` } as React.CSSProperties}
                 onChange={(event) => {
                   const next = Number(event.target.value);
+                  if (casting) {
+                    castControls.setVolume(next);
+                    return;
+                  }
                   setVolume(next);
                   if (next > 0) {
                     lastVolumeRef.current = next;
@@ -5894,6 +6074,16 @@ function AudiobookPlayer({
                 <button type="button" role="menuitem" onClick={() => setBarMenu("chapters")}>
                   <ChapterListIcon size={18} /><span>Chapters</span>
                 </button>
+                {showCastButton ? (
+                  <button type="button" role="menuitem" onClick={() => { setBarMenu(null); castControls.requestSession(); }}>
+                    <Cast size={18} /><span>{casting ? `Casting to ${castState.deviceName || "TV"}` : "Cast"}</span>
+                  </button>
+                ) : null}
+                {airPlay.available ? (
+                  <button type="button" role="menuitem" onClick={() => { setBarMenu(null); airPlay.showPicker(); }}>
+                    <Airplay size={18} /><span>AirPlay</span>
+                  </button>
+                ) : null}
               </div>
             </div>
           ) : null}

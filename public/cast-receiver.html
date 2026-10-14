@@ -61,6 +61,25 @@
       }, PROGRESS_INTERVAL_MS);
       playerManager.addEventListener([EventType.PAUSE, EventType.SEEKED], reportProgress);
 
+      // Keep the listening speed when the queue moves on to the next chapter. Loading a chapter
+      // resets the speed to 1×, so speed changes during a load are ignored.
+      let playbackRate = 1;
+      let loading = false;
+      playerManager.addEventListener(EventType.PLAYER_LOADING, () => {
+        loading = true;
+      });
+      playerManager.addEventListener(EventType.RATE_CHANGE, () => {
+        if (!loading) {
+          playbackRate = playerManager.getPlaybackRate();
+        }
+      });
+      playerManager.addEventListener(EventType.PLAYER_LOAD_COMPLETE, () => {
+        loading = false;
+        if (playerManager.getPlaybackRate() !== playbackRate) {
+          playerManager.setPlaybackRate(playbackRate);
+        }
+      });
+
       context.start();
     </script>
   </body>

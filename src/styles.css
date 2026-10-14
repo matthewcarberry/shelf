@@ -1131,7 +1131,9 @@ button.player-bar-title:hover strong {
   .player-bar-bookmark,
   .player-bar-menu,
   .player-bar-volume,
-  .player-bar-chapters-button {
+  .player-bar-chapters-button,
+  .player-bar-cast,
+  .player-bar-airplay {
     display: none;
   }
 

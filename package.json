@@ -31,6 +31,7 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@types/chromecast-caf-sender": "^1.0.11",
     "@types/mime-types": "latest",
     "@types/multer": "latest",
     "@types/node": "latest",
