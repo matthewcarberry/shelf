@@ -72,19 +72,29 @@ const OPENBOOK = {
 };
 
 // A stand-in for Libby's servers, recording every request it gets.
-function fakeLibby({ loans = [audiobookLoan(), openEbookLoan(), drmEbookLoan()], acceptCode = "12345678" } = {}) {
+function fakeLibby(options = {}) {
+  const { loans = [audiobookLoan(), openEbookLoan(), drmEbookLoan()], acceptCode = "12345678" } = options;
   const calls = [];
-  const state = { loans };
+  const state = { loans, copied: false };
   const json = (body, init = {}) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
   async function fetchImpl(url, init = {}) {
     const href = String(url);
     calls.push({ href, method: init.method || "GET", headers: init.headers || {}, body: init.body });
     const auth = init.headers?.Authorization;
-    if (href.endsWith("/chip?client=dewey")) return json({ chip: "c", identity: "secret-identity-token" });
+    if (href.endsWith("/chip?client=dewey")) {
+      // A refresh after Libby copied the account onto the new chip returns a linked token.
+      if (auth === "Bearer new-chip-token" && state.copied) return json({ chip: "c", identity: "secret-identity-token" });
+      if (auth) return json({ chip: "c", identity: auth.slice("Bearer ".length) });
+      return json({ chip: "c", identity: options.newChipToken || "secret-identity-token" });
+    }
+    if (href.endsWith("/chip/clone/code") && (init.method || "GET") === "GET") {
+      return json({ code: "24681357", expiry: Math.floor(Date.now() / 1000) + 60 });
+    }
     if (href.endsWith("/chip/clone/code")) {
       return new URLSearchParams(init.body).get("code") === acceptCode ? json({}) : new Response("", { status: 400 });
     }
     if (href.endsWith("/chip/sync")) {
+      if (auth === "Bearer new-chip-token") return json({ result: "synchronized", cards: [], loans: [] });
       if (auth !== "Bearer secret-identity-token") return new Response("", { status: 401 });
       return json({ result: "synchronized", cards: [card()], loans: state.loans });
     }
@@ -251,6 +261,25 @@ test("unlinking forgets the account and its cached books", async () => {
     await ctx.service.unlink("user-1");
     assert.equal(ctx.service.status("user-1").linked, false);
     await assert.rejects(fs.stat(filePath), { code: "ENOENT" });
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test("links by showing a code that is typed into Libby", async () => {
+  const ctx = await setup({ newChipToken: "new-chip-token" });
+  try {
+    assert.deepEqual(await ctx.service.checkLink("user-1"), { state: "none" });
+    const started = await ctx.service.startLink("user-1");
+    assert.equal(started.code, "24681357");
+    assert.equal((await ctx.service.checkLink("user-1")).state, "waiting");
+    assert.equal(ctx.service.status("user-1").linked, false);
+
+    ctx.fake.state.copied = true;
+    const linked = await ctx.service.checkLink("user-1");
+    assert.equal(linked.state, "linked");
+    assert.deepEqual(linked.libraries, ["Test Library"]);
+    assert.equal((await ctx.service.loans("user-1")).length, 3);
   } finally {
     await ctx.cleanup();
   }

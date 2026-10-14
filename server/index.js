@@ -565,6 +565,22 @@ app.post("/api/libby/link", async (req, res, next) => {
   }
 });
 
+app.post("/api/libby/link/start", async (req, res, next) => {
+  try {
+    res.json(await libby.startLink(req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/libby/link/check", async (req, res, next) => {
+  try {
+    res.json(await libby.checkLink(req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete("/api/libby/link", async (req, res, next) => {
   try {
     await libby.unlink(req.user.id);
