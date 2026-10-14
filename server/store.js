@@ -14,6 +14,8 @@ export const DEFAULT_PREFERENCES = {
   pageLayout: "single",
   margin: "medium",
   kindleEmail: "",
+  skipForwardSeconds: 30,
+  skipBackSeconds: 30,
   progressDisplay: {
     chapterTime: true,
     pageInBook: true,
@@ -612,6 +614,8 @@ export class SqliteStore {
       },
       fontSize: clampNumber(preferences.fontSize ?? current.fontSize, 70, 220),
       lineHeight: clampNumber(preferences.lineHeight ?? current.lineHeight, 1.1, 2.4),
+      skipForwardSeconds: clampSkipSeconds(preferences.skipForwardSeconds ?? current.skipForwardSeconds),
+      skipBackSeconds: clampSkipSeconds(preferences.skipBackSeconds ?? current.skipBackSeconds),
       kindleEmail: preferences.kindleEmail === undefined
         ? current.kindleEmail
         : String(preferences.kindleEmail || "").trim().toLowerCase().slice(0, 254)
@@ -1175,6 +1179,11 @@ function migratePreferences(value) {
     return {};
   }
   return value;
+}
+
+// Audiobook skip buttons: whole seconds, 1 second to 10 minutes.
+function clampSkipSeconds(value) {
+  return Math.round(clampNumber(value, 1, 600));
 }
 
 function clampNumber(value, min, max) {

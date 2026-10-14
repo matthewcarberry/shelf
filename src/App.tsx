@@ -31,7 +31,6 @@ import {
   Library,
   List,
   ListPlus,
-  ListMusic,
   Maximize,
   Minimize,
   LockKeyhole,
@@ -62,7 +61,9 @@ import {
   Type,
   UserPlus,
   Users,
+  Volume1,
   Volume2,
+  VolumeX,
   WifiOff,
   X
 } from "lucide-react";
@@ -168,6 +169,8 @@ const DEFAULT_PREFERENCES: ReaderPreferences = {
   pageLayout: "single",
   margin: "medium",
   kindleEmail: "",
+  skipForwardSeconds: 30,
+  skipBackSeconds: 30,
   progressDisplay: {
     chapterTime: true,
     pageInBook: true,
@@ -175,10 +178,22 @@ const DEFAULT_PREFERENCES: ReaderPreferences = {
   }
 };
 
+const MIN_SKIP_SECONDS = 1;
+const MAX_SKIP_SECONDS = 600;
+
+function normalizeSkipSeconds(value: unknown, fallback: number) {
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? Math.round(clamp(number, MIN_SKIP_SECONDS, MAX_SKIP_SECONDS))
+    : fallback;
+}
+
 function normalizePreferences(preferences?: Partial<ReaderPreferences> | null): ReaderPreferences {
   return {
     ...DEFAULT_PREFERENCES,
     ...(preferences || {}),
+    skipForwardSeconds: normalizeSkipSeconds(preferences?.skipForwardSeconds, DEFAULT_PREFERENCES.skipForwardSeconds),
+    skipBackSeconds: normalizeSkipSeconds(preferences?.skipBackSeconds, DEFAULT_PREFERENCES.skipBackSeconds),
     progressDisplay: {
       ...DEFAULT_PREFERENCES.progressDisplay,
       ...(preferences?.progressDisplay || {})
@@ -193,7 +208,7 @@ type LibrarySortMode = "recent" | "title" | "author" | "progress";
 const LIBRARY_SORT_MODES = new Set<LibrarySortMode>(["recent", "title", "author", "progress"]);
 const LIBRARY_LAYOUT_MODES = new Set<LibraryLayoutMode>(["grid", "list", "compact"]);
 type LibraryViewType = "ebooks" | "audiobooks";
-type ListeningSession = { bookId: string; reader: ReaderInfo; progress: ProgressState | null };
+type ListeningSession = { bookId: string; reader: ReaderInfo; progress: ProgressState | null; autoPlay: boolean };
 type MainView = "home" | LibraryViewType | "profile" | "marks" | "add";
 type ReaderPanel = "toc" | "search" | "display" | "marks" | null;
 
@@ -293,6 +308,7 @@ export function App() {
   const [readerOpen, setReaderOpen] = useState(false);
   const [listening, setListening] = useState<ListeningSession | null>(null);
   const [playerExpanded, setPlayerExpanded] = useState(false);
+  const [playRequest, setPlayRequest] = useState(0);
   const [usersOpen, setUsersOpen] = useState(false);
   const [serverSettingsOpen, setServerSettingsOpen] = useState(false);
   const [serverAccessOpen, setServerAccessOpen] = useState(false);
@@ -302,6 +318,7 @@ export function App() {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [metadataBook, setMetadataBook] = useState<Book | null>(null);
   const [artworkBook, setArtworkBook] = useState<Book | null>(null);
@@ -435,7 +452,7 @@ export function App() {
   const handleListen = useCallback(
     async (bookId: string) => {
       if (listening?.bookId === bookId) {
-        setPlayerExpanded(true);
+        setPlayRequest((value) => value + 1);
         return;
       }
 
@@ -452,8 +469,8 @@ export function App() {
           book.id === bookId ? { ...book, progress: resolvedProgress } : book
         ));
         listeningProgressRef.current = resolvedProgress;
-        setListening({ bookId, reader: info, progress: resolvedProgress });
-        setPlayerExpanded(true);
+        setListening({ bookId, reader: info, progress: resolvedProgress, autoPlay: true });
+        setPlayerExpanded(false);
       } catch (error) {
         handleError(error, "Unable to open title");
       } finally {
@@ -1346,10 +1363,9 @@ export function App() {
     : (activeViewCount === 1 ? "title" : "titles");
   const isPlayerExpanded = Boolean(listening) && playerExpanded;
   const isReaderFocused = (activeLibraryType !== null && readerOpen) || isPlayerExpanded;
-  const hasMiniPlayer = Boolean(listening) && !isPlayerExpanded;
 
   return (
-    <div className={`app-shell theme-${preferences.theme} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"} ${isReaderFocused ? "reader-focus" : ""}`}>
+    <div className={`app-shell theme-${preferences.theme} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"} ${isReaderFocused ? "reader-focus" : ""} ${listening ? "has-player-bar" : ""}`}>
       <aside className={`library-panel ${sidebarOpen ? "is-open" : ""}`}>
         <div className="sidebar-header">
           <button
@@ -1446,6 +1462,10 @@ export function App() {
             setUserMenuOpen(false);
             setAccountOpen(true);
           }}
+          onOpenSettings={() => {
+            setUserMenuOpen(false);
+            setSettingsOpen(true);
+          }}
           onManageUsers={() => {
             setUserMenuOpen(false);
             setUsersOpen(true);
@@ -1471,7 +1491,7 @@ export function App() {
         />
       ) : null}
 
-      <main className={`reader-stage ${isReaderFocused ? "is-reader-focused" : ""} ${hasMiniPlayer ? "has-mini-player" : ""}`}>
+      <main className={`reader-stage ${isReaderFocused ? "is-reader-focused" : ""}`}>
         {!isReaderFocused ? (
           <div className="top-strip">
             <button
@@ -1648,8 +1668,8 @@ export function App() {
         </>) : null}
 
         {listening && listeningBook ? (
-          // Stays mounted while minimized so playback continues as you browse.
-          <div className={isPlayerExpanded ? "library-workspace is-reading" : "audiobook-mini-dock"}>
+          // Stays mounted on every page so playback continues as you browse.
+          <div className={isPlayerExpanded ? "library-workspace is-reading" : "audiobook-player-dock"}>
             <AudiobookPlayer
               key={listening.bookId}
               book={listeningBook}
@@ -1657,6 +1677,10 @@ export function App() {
               progress={listening.progress}
               bookmarks={listening.reader.bookmarks}
               minimized={!isPlayerExpanded}
+              autoPlay={listening.autoPlay}
+              playRequest={playRequest}
+              skipBackSeconds={preferences.skipBackSeconds}
+              skipForwardSeconds={preferences.skipForwardSeconds}
               onProgress={handleListeningProgress}
               onBookmark={() => void handleListeningBookmark()}
               onDeleteBookmark={(bookmark) => void handleDeleteListeningBookmark(bookmark)}
@@ -1668,6 +1692,14 @@ export function App() {
           </div>
         ) : null}
       </main>
+
+      {settingsOpen ? (
+        <SettingsPanel
+          preferences={preferences}
+          onPreferencesChange={updatePreferences}
+          onClose={() => setSettingsOpen(false)}
+        />
+      ) : null}
 
       {accountOpen && auth.user ? (
         <AccountSettingsPanel
@@ -2211,6 +2243,7 @@ function AccountMenu({
   onToggle,
   onViewProfile,
   onChangePassword,
+  onOpenSettings,
   onManageUsers,
   onManageServer,
   onManageAccess,
@@ -2224,6 +2257,7 @@ function AccountMenu({
   onToggle: () => void;
   onViewProfile: () => void;
   onChangePassword: () => void;
+  onOpenSettings: () => void;
   onManageUsers: () => void;
   onManageServer: () => void;
   onManageAccess: () => void;
@@ -2258,6 +2292,10 @@ function AccountMenu({
             <CircleUserRound size={16} />
             <span>View profile</span>
           </button>
+          <button type="button" onClick={onOpenSettings}>
+            <SlidersHorizontal size={16} />
+            <span>Settings</span>
+          </button>
           <button type="button" onClick={onChangePassword}>
             <LockKeyhole size={16} />
             <span>Change password</span>
@@ -2289,6 +2327,105 @@ function AccountMenu({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function SettingsPanel({
+  preferences,
+  onPreferencesChange,
+  onClose
+}: {
+  preferences: ReaderPreferences;
+  onPreferencesChange: (patch: Partial<ReaderPreferences>) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-backdrop">
+      <section className="modal-panel settings-panel" aria-labelledby="settings-title">
+        <div className="modal-heading">
+          <div>
+            <h2 id="settings-title">Settings</h2>
+            <p>Saved to your account on this server.</p>
+          </div>
+          <button type="button" className="icon-button" title="Close settings" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <section className="settings-section" aria-labelledby="settings-playback-title">
+          <h3 id="settings-playback-title">Playback</h3>
+          <SkipSecondsField
+            label="Skip forwards"
+            value={preferences.skipForwardSeconds}
+            onChange={(seconds) => onPreferencesChange({ skipForwardSeconds: seconds })}
+          />
+          <SkipSecondsField
+            label="Skip backwards"
+            value={preferences.skipBackSeconds}
+            onChange={(seconds) => onPreferencesChange({ skipBackSeconds: seconds })}
+          />
+        </section>
+      </section>
+    </div>
+  );
+}
+
+function SkipSecondsField({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: number;
+  onChange: (seconds: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commit = (text: string) => {
+    const seconds = Number(text);
+    if (text.trim() === "" || !Number.isFinite(seconds)) {
+      setDraft(String(value));
+      return;
+    }
+    const next = normalizeSkipSeconds(seconds, value);
+    setDraft(String(next));
+    if (next !== value) {
+      onChange(next);
+    }
+  };
+
+  return (
+    <label className="settings-row">
+      <span>{label}</span>
+      <span className="settings-seconds">
+        <input
+          type="number"
+          inputMode="numeric"
+          min={MIN_SKIP_SECONDS}
+          max={MAX_SKIP_SECONDS}
+          step="1"
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            const seconds = Number(event.target.value);
+            if (event.target.value.trim() !== "" && Number.isInteger(seconds) && seconds >= MIN_SKIP_SECONDS && seconds <= MAX_SKIP_SECONDS) {
+              onChange(seconds);
+            }
+          }}
+          onBlur={(event) => commit(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              commit(event.currentTarget.value);
+            }
+          }}
+        />
+        <span>seconds</span>
+      </span>
+    </label>
   );
 }
 
@@ -4771,6 +4908,10 @@ function AudiobookPlayer({
   progress,
   bookmarks,
   minimized,
+  autoPlay,
+  playRequest,
+  skipBackSeconds,
+  skipForwardSeconds,
   onProgress,
   onBookmark,
   onDeleteBookmark,
@@ -4784,6 +4925,10 @@ function AudiobookPlayer({
   progress: ProgressState | null;
   bookmarks: ReaderInfo["bookmarks"];
   minimized: boolean;
+  autoPlay: boolean;
+  playRequest: number;
+  skipBackSeconds: number;
+  skipForwardSeconds: number;
   onProgress: (progress: ProgressState) => void;
   onBookmark: () => void;
   onDeleteBookmark: (bookmark: Bookmark) => void;
@@ -4794,7 +4939,10 @@ function AudiobookPlayer({
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
-  const pendingPlayRef = useRef(false);
+  const pendingPlayRef = useRef(autoPlay);
+  const lastPlayRequestRef = useRef(playRequest);
+  const lastVolumeRef = useRef(1);
+  const barToolsRef = useRef<HTMLDivElement | null>(null);
   const restoredRef = useRef(false);
   const lastEmitRef = useRef(0);
   const latestProgressRef = useRef<ProgressState | null>(progress);
@@ -4823,8 +4971,43 @@ function AudiobookPlayer({
   const [offlineDownload, setOfflineDownload] = useState({ completed: 0, total: tracks.length });
   const [activeTab, setActiveTab] = useState<"playing" | "details" | "bookmarks">("playing");
   const [speedOpen, setSpeedOpen] = useState(false);
-  const [chaptersOpen, setChaptersOpen] = useState(false);
+  const [barMenu, setBarMenu] = useState<"speed" | "chapters" | null>(null);
   const canStoreOffline = offlineStorageSupported();
+
+  // Browsers can refuse playback that doesn't follow a click; stay paused instead of erroring.
+  const playAudio = useCallback(() => {
+    void audioRef.current?.play().catch(() => setPlaying(false));
+  }, []);
+
+  useEffect(() => {
+    if (playRequest === lastPlayRequestRef.current) {
+      return;
+    }
+    lastPlayRequestRef.current = playRequest;
+    playAudio();
+  }, [playAudio, playRequest]);
+
+  useEffect(() => {
+    if (!barMenu) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!barToolsRef.current?.contains(event.target as Node)) {
+        setBarMenu(null);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setBarMenu(null);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [barMenu]);
   useActiveUsageTimer(playing, "audiobook", onUsage, false);
 
   const track = tracks[trackIndex] || tracks[0];
@@ -4923,10 +5106,10 @@ function AudiobookPlayer({
       album: book.title,
       artwork: book.coverUrl ? [{ src: book.coverUrl }] : []
     });
-    navigator.mediaSession.setActionHandler("play", () => void audioRef.current?.play());
+    navigator.mediaSession.setActionHandler("play", playAudio);
     navigator.mediaSession.setActionHandler("pause", () => audioRef.current?.pause());
-    navigator.mediaSession.setActionHandler("seekbackward", (details) => seekRelative(-(details.seekOffset || 15)));
-    navigator.mediaSession.setActionHandler("seekforward", (details) => seekRelative(details.seekOffset || 15));
+    navigator.mediaSession.setActionHandler("seekbackward", (details) => seekRelative(-(details.seekOffset || skipBackSeconds)));
+    navigator.mediaSession.setActionHandler("seekforward", (details) => seekRelative(details.seekOffset || skipForwardSeconds));
     return () => {
       for (const action of ["play", "pause", "seekbackward", "seekforward"] as MediaSessionAction[]) {
         navigator.mediaSession.setActionHandler(action, null);
@@ -4936,10 +5119,11 @@ function AudiobookPlayer({
 
   if (!track) {
     return (
-      <section className="prepare-state">
-        <h2>{book.title}</h2>
-        <p>No playable audio tracks were found.</p>
-        <button type="button" className="secondary-button" onClick={onClose}>Back to library</button>
+      <section className="player-bar player-bar-empty" aria-label="Audiobook player">
+        <p><strong>{book.title}</strong> has no playable audio tracks.</p>
+        <button type="button" className="player-bar-tool" title="Close player" aria-label="Close player" onClick={onClose}>
+          <X size={22} />
+        </button>
       </section>
     );
   }
@@ -4952,7 +5136,7 @@ function AudiobookPlayer({
         setTrackTime(audioRef.current.currentTime);
         emitProgress(audioRef.current.currentTime);
         if (autoPlay) {
-          void audioRef.current.play();
+          playAudio();
         }
       }
       return;
@@ -5084,7 +5268,7 @@ function AudiobookPlayer({
           }
           if (pendingPlayRef.current) {
             pendingPlayRef.current = false;
-            void audio.play();
+            playAudio();
           }
         }}
         onPlay={() => setPlaying(true)}
@@ -5125,72 +5309,176 @@ function AudiobookPlayer({
       />
   );
 
-  if (minimized) {
-    return (
-      <>
-        <section className="audiobook-mini-player" aria-label="Now playing">
-          <div className="audiobook-mini-progress" aria-hidden="true">
-            <span style={{ width: `${percent * 100}%` }} />
-          </div>
-          <button type="button" className="audiobook-mini-info" title="Open player" aria-label={`Open player for ${book.title}`} onClick={onExpand}>
-            <span className="audiobook-mini-art"><BookCover book={book} fit="contain" /></span>
-            <span className="audiobook-mini-copy">
-              <strong>{book.title}</strong>
-              <small>
-                {book.author || "Unknown author"}
-                {totalDuration > 0 ? ` · ${formatAudioTime(Math.max(0, totalDuration - elapsed))} left` : ""}
-              </small>
-            </span>
-          </button>
-          <div className="audiobook-mini-controls">
-            <button type="button" className="audiobook-mini-skip" title="Back 15 seconds" aria-label="Back 15 seconds" onClick={() => seekRelative(-15)}>
-              <RotateCcw size={20} />
-            </button>
-            <button
-              type="button"
-              className="audiobook-mini-play"
-              title={playing ? "Pause" : "Play"}
-              aria-label={playing ? "Pause" : "Play"}
-              onClick={() => {
-                if (playing) {
-                  audioRef.current?.pause();
-                } else {
-                  void audioRef.current?.play();
-                }
-              }}
-            >
-              {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
-            </button>
-            <button type="button" className="audiobook-mini-skip" title="Forward 15 seconds" aria-label="Forward 15 seconds" onClick={() => seekRelative(15)}>
-              <RotateCw size={20} />
-            </button>
-            <button type="button" className="audiobook-mini-expand" title="Open player" aria-label="Open player" onClick={onExpand}>
-              <ChevronUp size={22} />
-            </button>
-            <button
-              type="button"
-              className="audiobook-mini-close"
-              title="Stop and close player"
-              aria-label="Stop and close player"
-              onClick={() => {
-                audioRef.current?.pause();
-                emitProgress();
-                onClose();
-              }}
-            >
-              <X size={20} />
-            </button>
-          </div>
-        </section>
-        {audioElement}
-      </>
-    );
-  }
+  const remaining = Math.max(0, totalDuration - elapsed);
+  const chapterLabel = tracks.length > 1 ? track.title || `Chapter ${trackIndex + 1}` : "";
+  const togglePlayback = () => {
+    if (playing) {
+      audioRef.current?.pause();
+    } else {
+      playAudio();
+    }
+  };
+  const toggleMute = () => {
+    if (volume > 0) {
+      lastVolumeRef.current = volume;
+      setVolume(0);
+    } else {
+      setVolume(lastVolumeRef.current || 1);
+    }
+  };
 
-  // The audio element sits after the player UI in both layouts so React keeps the
-  // same element (and playback) when switching between minimized and full size.
+  // Pocket Casts-style bar along the bottom of every page.
+  const playerBar = (
+    <section className="player-bar" aria-label="Audiobook player">
+      <div className="player-bar-transport">
+        <button type="button" className="player-bar-art" title="Open player" aria-label={`Open player for ${book.title}`} onClick={onExpand}>
+          <BookCover book={book} fit="contain" />
+        </button>
+        <button type="button" className="player-bar-skip player-bar-back" title={`Back ${skipBackSeconds} seconds`} aria-label={`Back ${skipBackSeconds} seconds`} onClick={() => seekRelative(-skipBackSeconds)}>
+          <RotateCcw size={34} strokeWidth={1.7} />
+          <span aria-hidden="true" className={skipBackSeconds >= 100 ? "is-long" : ""}>{skipBackSeconds}</span>
+        </button>
+        <button type="button" className="player-bar-play" title={playing ? "Pause" : "Play"} aria-label={playing ? "Pause" : "Play"} onClick={togglePlayback}>
+          {playing ? <Pause size={34} fill="currentColor" strokeWidth={0} /> : <Play size={36} fill="currentColor" strokeWidth={0} />}
+        </button>
+        <button type="button" className="player-bar-skip player-bar-forward" title={`Forward ${skipForwardSeconds} seconds`} aria-label={`Forward ${skipForwardSeconds} seconds`} onClick={() => seekRelative(skipForwardSeconds)}>
+          <RotateCw size={34} strokeWidth={1.7} />
+          <span aria-hidden="true" className={skipForwardSeconds >= 100 ? "is-long" : ""}>{skipForwardSeconds}</span>
+        </button>
+      </div>
+
+      <div className="player-bar-now">
+        <button type="button" className="player-bar-title" title="Open player" onClick={onExpand}>
+          <strong>{book.title}</strong>
+          <span>{[book.author || "Unknown author", chapterLabel].filter(Boolean).join(" · ")}</span>
+        </button>
+        <div className="player-bar-seek">
+          <input
+            type="range"
+            min="0"
+            max="1000"
+            value={Math.round(percent * 1000)}
+            aria-label="Audiobook position"
+            aria-valuetext={`${formatAudioTime(elapsed)} of ${formatAudioTime(totalDuration)}`}
+            style={{ "--player-bar-progress": `${percent * 100}%` } as React.CSSProperties}
+            onChange={(event) => seekToPercent(Number(event.target.value) / 1000)}
+          />
+          <div className="player-bar-times">
+            <span>{formatAudioTime(elapsed)}</span>
+            <span>{totalDuration > 0 ? `-${formatAudioTime(remaining)}` : formatPercent(percent)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="player-bar-tools" ref={barToolsRef}>
+        <button type="button" className="player-bar-tool" title="Add bookmark" aria-label="Add bookmark" onClick={onBookmark}>
+          <BookmarkIcon size={24} />
+        </button>
+        {/* The cast button will go here once casting is built. */}
+        <div className="player-bar-menu">
+        <button
+          type="button"
+          className={`player-bar-tool player-bar-speed-button ${barMenu === "speed" ? "is-active" : ""}`}
+          title="Playback speed"
+          aria-label={`Playback speed ${formatPlaybackRate(playbackRate)}×`}
+          aria-expanded={barMenu === "speed"}
+          onClick={() => setBarMenu((menu) => (menu === "speed" ? null : "speed"))}
+        >
+          <span>{formatPlaybackRate(playbackRate)}×</span>
+        </button>
+        {barMenu === "speed" ? (
+          <div className="player-bar-popover player-bar-speed-popover" role="group" aria-label="Playback speed">
+            <div className="player-bar-popover-heading">
+              <span>Playback speed</span>
+              <strong>{formatPlaybackRate(playbackRate)}×</strong>
+            </div>
+            <input
+              type="range"
+              min="0.5"
+              max="3"
+              step="0.05"
+              value={playbackRate}
+              aria-label="Playback speed"
+              style={{ "--player-bar-progress": `${((playbackRate - 0.5) / 2.5) * 100}%` } as React.CSSProperties}
+              onChange={(event) => setPlaybackRate(Number(event.target.value))}
+            />
+            <div className="player-bar-speed-presets">
+              {[0.8, 1, 1.25, 1.5, 2].map((rate) => (
+                <button
+                  key={rate}
+                  type="button"
+                  className={Math.abs(playbackRate - rate) < 0.001 ? "is-active" : ""}
+                  onClick={() => setPlaybackRate(rate)}
+                >
+                  {formatPlaybackRate(rate)}×
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        </div>
+        <div className="player-bar-volume">
+          <button type="button" className="player-bar-tool" title={volume > 0 ? "Mute" : "Unmute"} aria-label={volume > 0 ? "Mute" : "Unmute"} onClick={toggleMute}>
+            {volume === 0 ? <VolumeX size={24} /> : volume < 0.5 ? <Volume1 size={24} /> : <Volume2 size={24} />}
+          </button>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={volume}
+            aria-label="Volume"
+            style={{ "--player-bar-progress": `${volume * 100}%` } as React.CSSProperties}
+            onChange={(event) => setVolume(Number(event.target.value))}
+          />
+        </div>
+        <button
+          type="button"
+          className={`player-bar-tool player-bar-chapters-button ${barMenu === "chapters" ? "is-active" : ""}`}
+          title="Chapters"
+          aria-label="Chapters"
+          aria-expanded={barMenu === "chapters"}
+          onClick={() => setBarMenu((menu) => (menu === "chapters" ? null : "chapters"))}
+        >
+          <ChapterListIcon size={24} />
+        </button>
+        {barMenu === "chapters" ? (
+          <div className="player-bar-popover player-bar-chapters" role="group" aria-label="Chapters">
+            <div className="player-bar-popover-heading">
+              <span>Chapters</span>
+              <strong>{trackIndex + 1} of {tracks.length}</strong>
+            </div>
+            <ol>
+              {tracks.map((item, index) => (
+                <li key={`${item.index}-${item.filename}`}>
+                  <button
+                    type="button"
+                    className={index === trackIndex ? "is-active" : ""}
+                    aria-current={index === trackIndex ? "true" : undefined}
+                    onClick={() => {
+                      selectTrack(index, 0, playing);
+                      setBarMenu(null);
+                    }}
+                  >
+                    <span>{index + 1}</span>
+                    <strong>{item.title || `Chapter ${index + 1}`}</strong>
+                    <small>{durations[index] ? formatAudioTime(durations[index]) : ""}</small>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+
+  // The bar, the optional full player and the audio element keep the same order so React
+  // keeps the same audio element (and playback) when the full player opens or closes.
   return (
     <>
+      {playerBar}
+      {minimized ? null : (
       <section className="audiobook-player-shell audiobook-pocket-shell audiobook-desktop-shell">
         <header className="audiobook-pocket-header">
           <button type="button" className="audiobook-pocket-close" aria-label="Minimize player" title="Minimize player" onClick={() => {
@@ -5212,15 +5500,6 @@ function AudiobookPlayer({
               </button>
             ))}
           </nav>
-          <button
-            type="button"
-            className={`audiobook-pocket-queue ${chaptersOpen ? "is-active" : ""}`}
-            aria-label={`${tracks.length} chapters`}
-            onClick={() => setChaptersOpen((value) => !value)}
-          >
-            <strong>{tracks.length}</strong>
-            <ListMusic size={22} />
-          </button>
           <div className="audiobook-desktop-header-tools">
             <button type="button" title={offlineStored ? "Available offline" : "Make available offline"} className={offlineStored ? "is-active" : ""} disabled={!canStoreOffline || offlineBusy} onClick={() => void toggleOfflineMode()}>
               {offlineBusy ? <Loader2 className="spin" size={21} /> : offlineStored ? <WifiOff size={21} /> : <Download size={21} />}
@@ -5282,15 +5561,15 @@ function AudiobookPlayer({
               <button
                 type="button"
                 className="audiobook-skip-button"
-                title="Back 15 seconds"
-                aria-label="Back 15 seconds"
-                onClick={() => seekRelative(-15)}
+                title={`Back ${skipBackSeconds} seconds`}
+                aria-label={`Back ${skipBackSeconds} seconds`}
+                onClick={() => seekRelative(-skipBackSeconds)}
               >
                 <span className="audiobook-skip-icon" aria-hidden="true">
                   <RotateCcw size={26} />
-                  <span className="audiobook-skip-seconds">15</span>
+                  <span className="audiobook-skip-seconds">{skipBackSeconds}</span>
                 </span>
-                <small className="audiobook-desktop-jump-label">−15</small>
+                <small className="audiobook-desktop-jump-label">−{skipBackSeconds}</small>
               </button>
               <button
                 type="button"
@@ -5300,7 +5579,7 @@ function AudiobookPlayer({
                   if (playing) {
                     audioRef.current?.pause();
                   } else {
-                    void audioRef.current?.play();
+                    playAudio();
                   }
                 }}
               >
@@ -5309,15 +5588,15 @@ function AudiobookPlayer({
               <button
                 type="button"
                 className="audiobook-skip-button"
-                title="Forward 15 seconds"
-                aria-label="Forward 15 seconds"
-                onClick={() => seekRelative(15)}
+                title={`Forward ${skipForwardSeconds} seconds`}
+                aria-label={`Forward ${skipForwardSeconds} seconds`}
+                onClick={() => seekRelative(skipForwardSeconds)}
               >
                 <span className="audiobook-skip-icon" aria-hidden="true">
                   <RotateCw size={26} />
-                  <span className="audiobook-skip-seconds">15</span>
+                  <span className="audiobook-skip-seconds">{skipForwardSeconds}</span>
                 </span>
-                <small className="audiobook-desktop-jump-label">+15</small>
+                <small className="audiobook-desktop-jump-label">+{skipForwardSeconds}</small>
               </button>
               <button
                 type="button"
@@ -5333,9 +5612,6 @@ function AudiobookPlayer({
             <div className="audiobook-desktop-tools" aria-label="Audiobook playback tools">
               <button type="button" className={speedOpen ? "is-active" : ""} onClick={() => setSpeedOpen((value) => !value)}>
                 <Gauge size={27} /><span>Speed ({formatPlaybackRate(playbackRate)}×)</span>
-              </button>
-              <button type="button" className={chaptersOpen ? "is-active" : ""} onClick={() => setChaptersOpen((value) => !value)}>
-                <ListMusic size={28} /><span>Tracks</span>
               </button>
               <label className="audiobook-desktop-volume">
                 <Volume2 size={25} />
@@ -5363,20 +5639,6 @@ function AudiobookPlayer({
             </div> : null}
           </div>
 
-          {tracks.length > 1 ? (
-            <aside className="audiobook-chapters">
-              <h3>Parts</h3>
-              <div>
-                {tracks.map((item, index) => (
-                  <button key={`${item.index}-${item.filename}`} type="button" className={index === trackIndex ? "is-active" : ""} onClick={() => selectTrack(index, 0, playing)}>
-                    <span>{index + 1}</span>
-                    <strong>{item.title}</strong>
-                    <small>{item.durationSeconds ? formatAudioTime(item.durationSeconds) : ""}</small>
-                  </button>
-                ))}
-              </div>
-            </aside>
-          ) : null}
         </div>
         ) : null}
 
@@ -5436,27 +5698,26 @@ function AudiobookPlayer({
           </section>
         ) : null}
 
-        {chaptersOpen ? (
-          <aside className="audiobook-pocket-chapters" aria-label="Audiobook chapters">
-            <header><div><span>{tracks.length} chapters</span><h3>{book.title}</h3></div><button type="button" aria-label="Close chapters" onClick={() => setChaptersOpen(false)}><X size={20} /></button></header>
-            <div>{tracks.map((item, index) => (
-              <button key={`${item.index}-${item.filename}`} type="button" className={index === trackIndex ? "is-active" : ""} onClick={() => { selectTrack(index, 0, playing); setChaptersOpen(false); setActiveTab("playing"); }}>
-                <span>{index + 1}</span><strong>{item.title}</strong><small>{item.durationSeconds ? formatAudioTime(item.durationSeconds) : ""}</small>
-              </button>
-            ))}</div>
-          </aside>
-        ) : null}
 
         <footer className="audiobook-pocket-tools" aria-label="Audiobook tools">
           <button type="button" className={speedOpen ? "is-active" : ""} title="Playback speed" onClick={() => { setSpeedOpen((value) => !value); setActiveTab("playing"); }}><strong>{formatPlaybackRate(playbackRate)}×</strong><span>Speed</span></button>
           <button type="button" title="Offline mode" className={offlineStored ? "is-active" : ""} onClick={() => setActiveTab("details")}><Download size={22} /><span>Offline</span></button>
           <button type="button" title="Add bookmark" onClick={onBookmark}><BookmarkIcon size={24} /><span>Bookmark</span></button>
           <button type="button" title="Share audiobook" onClick={() => void shareAudiobook()}><Share2 size={23} /><span>Share</span></button>
-          <button type="button" title="Chapters" className={chaptersOpen ? "is-active" : ""} onClick={() => setChaptersOpen((value) => !value)}><ListMusic size={23} /><span>Chapters</span></button>
         </footer>
       </section>
+      )}
       {audioElement}
     </>
+  );
+}
+
+// Chapter list icon: three long lines with three short dashes beside them.
+function ChapterListIcon({ size = 24 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
+      <path d="M2 6h13M2 12h13M2 18h13M18 6h4M18 12h4M18 18h4" />
+    </svg>
   );
 }
 
