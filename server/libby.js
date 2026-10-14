@@ -61,10 +61,11 @@ export function createLibbyApi({ fetchImpl = globalThis.fetch } = {}) {
     return response;
   }
 
+  // 409 rather than 401, because a 401 from shelf signs the person out of shelf itself.
   async function json(url, options) {
     const response = await send(url, options);
     if (response.status === 401 || response.status === 403) {
-      throw new LibbyError("Libby no longer accepts this link. Link Libby again with a new setup code.", 401);
+      throw new LibbyError("Libby no longer accepts this link. Link Libby again with a new setup code.", 409);
     }
     if (!response.ok) {
       throw new LibbyError(`Libby returned an error (${response.status})`);
@@ -262,7 +263,7 @@ export class LibbyService {
     try {
       return this.decrypt(account.identity).token;
     } catch {
-      throw new LibbyError("Link Libby again with a new setup code", 401);
+      throw new LibbyError("Link Libby again with a new setup code", 409);
     }
   }
 

@@ -5753,3 +5753,77 @@ button.book-details-mark:focus-visible {
     flex: 1 0 100%;
   }
 }
+
+.libby-view {
+  min-height: 0;
+  overflow: auto;
+}
+
+.libby-link-card {
+  display: grid;
+  gap: 12px;
+  width: min(440px, calc(100% - 32px));
+  margin: 40px auto;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.libby-link-card h2,
+.libby-link-card p {
+  margin: 0;
+}
+
+.libby-link-card input {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 1.2rem;
+  letter-spacing: 0.2em;
+}
+
+.libby-link-card small,
+.libby-loan-note {
+  color: var(--muted);
+}
+
+.libby-error {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.libby-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px 10px;
+  color: var(--muted);
+}
+
+.libby-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.libby-header-actions .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.libby-loan-card .library-book-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.libby-loan-author {
+  color: var(--muted);
+}
+
+.libby-loan-action {
+  min-height: 34px;
+}

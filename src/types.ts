@@ -53,6 +53,25 @@ export interface Book extends EditableBookMetadata {
   updatedAt: string;
   error: string | null;
   progress: ProgressState | null;
+  libby?: LibbyLoanInfo;
+}
+
+// "libby" means the loan has DRM or is delivered to Kindle, so it opens in Libby itself.
+export type LibbyReadingMode = "audio" | "epub" | "pdf" | "libby";
+
+export interface LibbyLoanInfo {
+  titleId: string;
+  cardId: string;
+  libraryName: string;
+  dueAt: string | null;
+  mode: LibbyReadingMode;
+  libbyUrl: string;
+}
+
+export interface LibbyStatus {
+  linked: boolean;
+  linkedAt: string | null;
+  libraries: string[];
 }
 
 export interface ArtworkCandidate {
