@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import mime from "mime-types";
 import JSZip from "jszip";
 import { parseFile } from "music-metadata";
+import sanitize from "sanitize-filename";
 
 export const DIRECT_FORMATS = new Map([
   [".epub", "epub"],
@@ -54,6 +55,10 @@ export const CONVERTIBLE_EXTENSIONS = new Set([
   ".txt"
 ]);
 
+// Organized books live in <library>/<ebooks|audiobooks>/<Title (Year)>/.
+export const EBOOK_FOLDER = "ebooks";
+export const AUDIOBOOK_FOLDER = "audiobooks";
+
 export const ALL_BOOK_EXTENSIONS = new Set([
   ...DIRECT_FORMATS.keys(),
   ...CONVERTIBLE_EXTENSIONS
@@ -85,6 +90,7 @@ export async function scanLibrary(store, paths, options = {}) {
   const ebookFiles = [];
   const audioFiles = [];
   const cachedAudio = buildAudioCache(store.listBooks(), paths.libraryDir);
+  const ebookIds = buildEbookIdIndex(store.listBooks());
   const uploadBatchPaths = new Set(
     (options.audioBatchPaths || []).map((value) => normalizePath(value).toLowerCase())
   );
@@ -102,7 +108,7 @@ export async function scanLibrary(store, paths, options = {}) {
   }
 
   for (const filePath of ebookFiles) {
-    const book = await buildBookRecord(filePath, paths, store);
+    const book = await buildBookRecord(filePath, paths, store, ebookIds);
     await store.upsertBook(book);
   }
 
@@ -367,11 +373,13 @@ export function streamFile(req, res, filePath, fallbackType) {
   fsSync.createReadStream(filePath, { start, end }).pipe(res);
 }
 
-async function buildBookRecord(filePath, paths, store) {
+async function buildBookRecord(filePath, paths, store, ebookIds = new Map()) {
   const stat = await fs.stat(filePath);
   const relPath = normalizePath(path.relative(paths.libraryDir, filePath));
   const ext = path.extname(filePath).toLowerCase();
-  const id = crypto.createHash("sha1").update(relPath.toLowerCase()).digest("hex").slice(0, 16);
+  // A book that was moved keeps the ID it was first given, so progress and bookmarks follow it.
+  const id = ebookIds.get(relPath.toLowerCase()) ||
+    crypto.createHash("sha1").update(relPath.toLowerCase()).digest("hex").slice(0, 16);
   const existing = store.getBook(id) || {};
   const fallbackTitle = titleFromFilename(path.basename(filePath, ext));
   const filenameMetadata = metadataFromFilename(path.basename(filePath, ext));
@@ -589,6 +597,109 @@ function compareAudioTracks(a, b) {
     (a.disc || 0) - (b.disc || 0) ||
     (a.track || 0) - (b.track || 0) ||
     a.filename.localeCompare(b.filename, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function buildEbookIdIndex(books) {
+  const ids = new Map();
+  for (const book of books) {
+    if (isAudiobook(book) || !book.relPath) continue;
+    ids.set(normalizePath(book.relPath).toLowerCase(), book.id);
+  }
+  return ids;
+}
+
+export function bookFolderName(book) {
+  const title = String(book.title || "")
+    .split(":")[0]
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim() || "Untitled";
+  const year = String(book.publicationDate || "").match(/\b(\d{4})\b/)?.[1];
+  const name = sanitize(year ? `${title} (${year})` : title).replace(/\s+/g, " ").replace(/[. ]+$/, "");
+  return name || "Untitled";
+}
+
+export function organizedBookDir(paths, book) {
+  const typeFolder = isAudiobook(book) ? AUDIOBOOK_FOLDER : EBOOK_FOLDER;
+  return path.join(paths.libraryDir, typeFolder, bookFolderName(book));
+}
+
+// Moves a book's files into its organized folder and points its record at the new paths.
+// The book keeps its ID, so reading progress, bookmarks and highlights stay attached.
+export async function organizeBook(store, paths, book, { dryRun = false } = {}) {
+  const targetDir = organizedBookDir(paths, book);
+  const sources = isAudiobook(book)
+    ? (book.audioFiles || []).map((track) => track.path)
+    : [book.path];
+  const moves = [];
+  const targets = new Set();
+  for (const source of sources.filter(Boolean)) {
+    const target = path.join(targetDir, path.basename(source));
+    if (path.resolve(source) === path.resolve(target)) continue;
+    if (targets.has(target.toLowerCase()) || fsSync.existsSync(target)) {
+      throw new Error(`Cannot organize "${book.title}": ${target} already exists`);
+    }
+    targets.add(target.toLowerCase());
+    moves.push({ from: source, to: target });
+  }
+
+  if (moves.length === 0 || dryRun) {
+    return { book, moves };
+  }
+
+  await fs.mkdir(targetDir, { recursive: true });
+  for (const move of moves) {
+    await moveFile(move.from, move.to);
+  }
+
+  const moved = new Map(moves.map((move) => [path.resolve(move.from), move.to]));
+  const relocate = (filePath) => (filePath && moved.get(path.resolve(filePath))) || filePath;
+  const relative = (filePath) => normalizePath(path.relative(paths.libraryDir, filePath));
+  const newPath = relocate(book.path);
+  const patch = { path: newPath, relPath: relative(newPath) };
+  if (book.audioFiles) {
+    patch.audioFiles = book.audioFiles.map((track) => {
+      const trackPath = relocate(track.path);
+      return { ...track, path: trackPath, relPath: relative(trackPath) };
+    });
+  }
+  const updated = await store.patchBook(book.id, patch);
+
+  for (const directory of new Set(moves.map((move) => path.dirname(move.from)))) {
+    await removeEmptyDirectories(directory, paths.libraryDir);
+  }
+  return { book: updated, moves };
+}
+
+function isAudiobook(book) {
+  return book.mediaType === "audiobook" || book.readingFormat === "audio";
+}
+
+async function moveFile(from, to) {
+  try {
+    await fs.rename(from, to);
+  } catch (error) {
+    if (error.code !== "EXDEV") throw error;
+    await fs.copyFile(from, to);
+    const stat = await fs.stat(from);
+    await fs.utimes(to, stat.atime, stat.mtime);
+    await fs.rm(from);
+  }
+}
+
+// Removes folders a move left empty, up to (but never including) the library and type roots.
+async function removeEmptyDirectories(directory, libraryDir) {
+  const root = path.resolve(libraryDir);
+  const keep = new Set([root, path.join(root, EBOOK_FOLDER), path.join(root, AUDIOBOOK_FOLDER)]);
+  let current = path.resolve(directory);
+  while (current.startsWith(root + path.sep) && !keep.has(current)) {
+    try {
+      await fs.rmdir(current);
+    } catch {
+      return;
+    }
+    current = path.dirname(current);
+  }
 }
 
 function buildAudioCache(books, libraryRoot) {

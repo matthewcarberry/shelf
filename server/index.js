@@ -19,6 +19,7 @@ import {
   getAudioTracks,
   getPaths,
   getReadingFile,
+  organizeBook,
   scanLibrary,
   streamFile
 } from "./library.js";
@@ -848,10 +849,12 @@ app.post("/api/books/upload", requireAdmin, upload.array("books", 50), async (re
     const uploadedAudioPaths = deduplicated.files
       .filter((file) => AUDIO_EXTENSIONS.has(path.extname(file.path).toLowerCase()))
       .map((file) => normalizeUploadPath(path.relative(paths.libraryDir, file.path)));
-    const books = await scanLibrary(store, paths, {
+    const scanned = await scanLibrary(store, paths, {
       audioBatchKey: uploadedAudioPaths.length > 1 ? crypto.randomUUID() : null,
       audioBatchPaths: uploadedAudioPaths
     });
+    await organizeUploadedBooks(scanned, deduplicated.files);
+    const books = store.listBooks();
     await platform.reconcileBooks(books);
     res.json({
       rejected: invalid.map((file) => file.originalname),
@@ -1454,6 +1457,20 @@ function uniqueFilename(dir, filename) {
   }
 
   return candidate;
+}
+
+// Uploads land in the library root, then move into ebooks/ or audiobooks/<Title (Year)>/.
+async function organizeUploadedBooks(books, uploadedFiles) {
+  const uploaded = new Set(uploadedFiles.map((file) => path.resolve(file.path)));
+  for (const book of books) {
+    const files = [book.path, ...(book.audioFiles || []).map((track) => track.path)].filter(Boolean);
+    if (!files.some((file) => uploaded.has(path.resolve(file)))) continue;
+    try {
+      await organizeBook(store, paths, book);
+    } catch (error) {
+      console.error(`Could not organize uploaded book "${book.title}"`, error);
+    }
+  }
 }
 
 function normalizeUploadPath(value) {

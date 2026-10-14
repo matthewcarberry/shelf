@@ -211,7 +211,7 @@ When an existing installation starts with `/data/shelfstream.json` but no initia
 
 The public `/.well-known/shelfstream-server` endpoint exposes the stable server ID, public key, display name, and capabilities. The private key never leaves the SQLite database.
 
-Shelf does not move or rewrite original files in `/library`. When an ebook cannot be rendered directly in the browser, the server creates an EPUB reading copy in `/data/converted` and keeps the original untouched.
+Shelf never rewrites original files in `/library`. Books uploaded through Shelf are filed into `/library/ebooks/Title (Year)/` or `/library/audiobooks/Title (Year)/`; files placed in `/library` some other way stay where they are. To file an existing library the same way, stop Shelf and run `node server/organize-library.js --dry-run` in the container, then again without `--dry-run`. Moved books keep their IDs, so reading progress, bookmarks, and highlights follow them. When an ebook cannot be rendered directly in the browser, the server creates an EPUB reading copy in `/data/converted` and keeps the original untouched.
 
 PDFs and audio are served with HTTP range requests. EPUBs are opened through the browser reader from the server URL; the app does not trigger a file download, though the browser still fetches the content needed to render the title.
 
