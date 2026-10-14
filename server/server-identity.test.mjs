@@ -21,7 +21,7 @@ test("publishes the same permanent server identity after restart", async () => {
       (response) => response.json()
     );
     assert.equal(firstHealth.storage, "sqlite");
-    assert.equal(firstHealth.schemaVersion, 4);
+    assert.equal(firstHealth.schemaVersion, 5);
     assert.equal(firstHealth.serverId, firstIdentity.serverId);
     assert.equal(firstIdentity.name, "Identity Test Server");
     assert.match(firstIdentity.publicKey, /BEGIN PUBLIC KEY/);

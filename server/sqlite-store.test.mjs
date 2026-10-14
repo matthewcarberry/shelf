@@ -34,7 +34,7 @@ test("imports the legacy JSON store into SQLite without losing user state", asyn
     assert.equal(sqlite.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM users").get().count, 1);
     assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM books").get().count, 1);
-    assert.equal(sqlite.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 4);
+    assert.equal(sqlite.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 5);
     sqlite.close();
   } finally {
     store.close();
