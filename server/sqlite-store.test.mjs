@@ -97,6 +97,43 @@ test("persists profile usage and a user's Read List across restarts", async () =
   }
 });
 
+test("defaults audiobook skips to 30 seconds and keeps a user's choice across restarts", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "shelf-skip-preferences-"));
+  const legacyFile = path.join(workspace, "shelfstream.json");
+  const first = new SqliteStore(legacyFile);
+
+  try {
+    await first.init();
+    assert.equal(first.getPreferences("listener").skipForwardSeconds, 30);
+    assert.equal(first.getPreferences("listener").skipBackSeconds, 30);
+
+    await first.setPreferences("listener", { skipForwardSeconds: 45.4, skipBackSeconds: 5 });
+    assert.equal(first.getPreferences("listener").skipForwardSeconds, 45);
+    assert.equal(first.getPreferences("listener").skipBackSeconds, 5);
+
+    await first.setPreferences("listener", { skipForwardSeconds: 0, skipBackSeconds: 5000 });
+    assert.equal(first.getPreferences("listener").skipForwardSeconds, 1);
+    assert.equal(first.getPreferences("listener").skipBackSeconds, 600);
+
+    await first.setPreferences("listener", { theme: "night" });
+    assert.equal(first.getPreferences("listener").skipForwardSeconds, 1);
+    first.close();
+
+    const second = new SqliteStore(legacyFile);
+    await second.init();
+    try {
+      assert.equal(second.getPreferences("listener").skipForwardSeconds, 1);
+      assert.equal(second.getPreferences("listener").skipBackSeconds, 600);
+      assert.equal(second.getPreferences("listener").theme, "night");
+    } finally {
+      second.close();
+    }
+  } finally {
+    first.close();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test("keeps one Ed25519 identity and SQLite state across restarts", async () => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "shelfstream-server-identity-"));
   const legacyFile = path.join(workspace, "shelfstream.json");

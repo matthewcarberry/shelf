@@ -28,6 +28,7 @@ services:
       # For direct plain HTTP testing, leave these false. Set both true behind HTTPS.
       TRUST_PROXY: ${TRUST_PROXY:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      CAST_APP_ID: ${CAST_APP_ID:-}
       REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
       REGISTRATION_REQUIRE_EMAIL_NOTIFY: ${REGISTRATION_REQUIRE_EMAIL_NOTIFY:-true}
       REGISTRATION_NOTIFY_EMAIL: ${REGISTRATION_NOTIFY_EMAIL:-}

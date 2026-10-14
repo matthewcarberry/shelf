@@ -1,4 +1,5 @@
 import express from "express";
+import mime from "mime-types";
 import multer from "multer";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -28,6 +29,7 @@ import { kindleDeliverySettings, sendBookToKindle } from "./kindle.js";
 import { ActivityTracker } from "./activity.js";
 import { PlatformService } from "./platform.js";
 import { downloadOpenLibraryCover, searchOpenLibraryArtwork } from "./artwork.js";
+import { createCastLinks } from "./cast.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -63,6 +65,9 @@ const platform = new PlatformService(store, {
   publicUrl: process.env.PUBLIC_URL || ""
 });
 await platform.init();
+const castLinks = createCastLinks(paths.dataDir);
+// The Google Cast application ID for Shelf's own TV screen; without it senders use Google's default receiver.
+const castReceiverAppId = String(process.env.CAST_APP_ID || "").trim() || null;
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -305,6 +310,72 @@ app.post("/api/platform/delegated/ticket", async (req, res, next) => {
     next(error);
   }
 });
+
+// Cast links: public routes the Chromecast calls with a signed token instead of a sign-in.
+app.use("/cast/:token", (req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
+  res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  const claims = castLinks.verify(req.params.token);
+  const user = claims ? castLinkUser(claims.userId) : null;
+  const book = user ? store.getBook(claims.bookId) : null;
+  if (
+    !book ||
+    book.readingFormat !== "audio" ||
+    !platform.getMembership(serverIdentity.serverId, user.id) ||
+    !platform.canAccessBook(user.id, book.id)
+  ) {
+    res.status(404).json({ error: "Cast link is invalid or has expired" });
+    return;
+  }
+  req.castUser = user;
+  req.castBook = book;
+  next();
+});
+
+app.get("/cast/:token/audio/:trackIndex", (req, res) => {
+  const trackIndex = Number.parseInt(req.params.trackIndex, 10);
+  const track = Number.isInteger(trackIndex) ? req.castBook.audioFiles?.[trackIndex] : null;
+  if (!track) {
+    res.status(404).json({ error: "Audio track not found" });
+    return;
+  }
+  streamFile(req, res, track.path, "audio/mpeg");
+});
+
+app.get("/cast/:token/cover", (req, res) => {
+  if (!req.castBook.coverPath) {
+    res.status(404).json({ error: "Cover not found" });
+    return;
+  }
+  streamFile(req, res, req.castBook.coverPath, req.castBook.coverMime || "image/jpeg");
+});
+
+app.put("/cast/:token/progress", async (req, res, next) => {
+  try {
+    const update = audioProgressUpdate(req.castBook, req.body?.trackIndex, req.body?.position, req.body?.duration);
+    if (!update) {
+      res.status(400).json({ error: "Invalid audiobook progress update" });
+      return;
+    }
+    const progress = await store.setProgress(req.castUser.id, req.castBook.id, update);
+    res.json({ progress });
+  } catch (error) {
+    next(error);
+  }
+});
+
+function castLinkUser(userId) {
+  if (!auth.enabled) {
+    return userId === "anonymous" ? { id: "anonymous" } : null;
+  }
+  return store.getUser(userId) || null;
+}
 
 app.use("/api", (req, res, next) => {
   auth.middleware(req, res, next);
@@ -929,6 +1000,39 @@ app.get("/api/books/:bookId/audio/:trackIndex", (req, res) => {
   streamFile(req, res, track.path, "audio/mpeg");
 });
 
+app.get("/api/cast/config", (_req, res) => {
+  res.json({ receiverAppId: castReceiverAppId });
+});
+
+app.post("/api/books/:bookId/cast", (req, res) => {
+  const book = store.getBook(req.params.bookId);
+  if (!book || book.readingFormat !== "audio") {
+    res.status(404).json({ error: "Audiobook not found" });
+    return;
+  }
+  const { token, expiresAt } = castLinks.issue(req.user.id, book.id);
+  // The Chromecast needs absolute https links; PUBLIC_URL is the address it can reach.
+  const origin = String(process.env.PUBLIC_URL || "").trim().replace(/\/+$/, "") || `${req.protocol}://${req.get("host")}`;
+  const base = `${origin}/cast/${token}`;
+  res.json({
+    expiresAt,
+    receiverAppId: castReceiverAppId,
+    title: book.title,
+    author: book.author || null,
+    coverUrl: book.coverPath ? `${base}/cover` : null,
+    progressUrl: `${base}/progress`,
+    tracks: getAudioTracks(book).map((track) => ({
+      ...track,
+      url: `${base}/audio/${track.index}`,
+      contentType: castContentType(book.audioFiles[track.index].path)
+    }))
+  });
+});
+
+function castContentType(filePath) {
+  return mime.lookup(filePath) || "audio/mpeg";
+}
+
 app.get("/api/books/:bookId/cover", (req, res) => {
   const book = store.getBook(req.params.bookId);
   if (!book || !book.coverPath) {
@@ -1066,35 +1170,43 @@ app.put("/api/books/:bookId/progress", async (req, res, next) => {
 app.post("/api/mobile/playback-progress", async (req, res, next) => {
   try {
     const [bookId, trackValue] = String(req.body?.mediaId || "").split(":");
-    const trackIndex = Number.parseInt(trackValue, 10);
     const book = store.getBook(bookId);
-    if (!book || book.readingFormat !== "audio" || !Number.isInteger(trackIndex)) {
+    const update = book ? audioProgressUpdate(book, trackValue, req.body?.position, req.body?.duration) : null;
+    if (!update) {
       res.status(400).json({ error: "Invalid audiobook progress update" });
       return;
     }
-
-    const position = Math.max(0, Number(req.body?.position) || 0);
-    const reportedDuration = Math.max(0, Number(req.body?.duration) || 0);
-    const trackDuration = Number(book.audioFiles?.[trackIndex]?.durationSeconds) || reportedDuration;
-    const elapsedBeforeTrack = (book.audioFiles || [])
-      .slice(0, trackIndex)
-      .reduce((sum, track) => sum + (Number(track.durationSeconds) || 0), 0);
-    const totalDuration =
-      Number(book.durationSeconds) ||
-      (book.audioFiles || []).reduce((sum, track) => sum + (Number(track.durationSeconds) || 0), 0);
-    const currentTime = elapsedBeforeTrack + Math.min(position, trackDuration || position);
-    const progress = await store.setProgress(req.user.id, book.id, {
-      percent: totalDuration > 0 ? currentTime / totalDuration : 0,
-      currentTime,
-      duration: totalDuration || null,
-      trackIndex,
-      trackTime: position
-    });
+    const progress = await store.setProgress(req.user.id, book.id, update);
     res.json({ progress });
   } catch (error) {
     next(error);
   }
 });
+
+// Turns a position within one track into whole-book progress, as the web player stores it.
+function audioProgressUpdate(book, trackValue, positionValue, durationValue) {
+  const trackIndex = Number.parseInt(trackValue, 10);
+  if (book.readingFormat !== "audio" || !Number.isInteger(trackIndex) || !book.audioFiles?.[trackIndex]) {
+    return null;
+  }
+  const position = Math.max(0, Number(positionValue) || 0);
+  const reportedDuration = Math.max(0, Number(durationValue) || 0);
+  const trackDuration = Number(book.audioFiles[trackIndex].durationSeconds) || reportedDuration;
+  const elapsedBeforeTrack = book.audioFiles
+    .slice(0, trackIndex)
+    .reduce((sum, track) => sum + (Number(track.durationSeconds) || 0), 0);
+  const totalDuration =
+    Number(book.durationSeconds) ||
+    book.audioFiles.reduce((sum, track) => sum + (Number(track.durationSeconds) || 0), 0);
+  const currentTime = elapsedBeforeTrack + Math.min(position, trackDuration || position);
+  return {
+    percent: totalDuration > 0 ? currentTime / totalDuration : 0,
+    currentTime,
+    duration: totalDuration || null,
+    trackIndex,
+    trackTime: position
+  };
+}
 
 app.post("/api/books/:bookId/bookmarks", async (req, res, next) => {
   try {

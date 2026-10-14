@@ -60,6 +60,7 @@ export function BookDetailsView({
   onBack,
   onOpenBook,
   onStart,
+  onPlayAt,
   onOpenMark,
   onAuthorSelect,
   onSetReadState,
@@ -80,6 +81,7 @@ export function BookDetailsView({
   onBack: () => void;
   onOpenBook: (bookId: string) => void;
   onStart: (book: Book) => void;
+  onPlayAt: (book: Book, locator: string) => void;
   onOpenMark: (book: Book, target: MarkTarget) => void;
   onAuthorSelect: (author: string, mediaType: MediaType) => void;
   onSetReadState: (bookId: string, read: boolean) => void;
@@ -206,7 +208,7 @@ export function BookDetailsView({
   ];
 
   const startLabel = isAudiobook
-    ? nowPlaying ? "Now playing" : started ? "Resume" : "Play"
+    ? nowPlaying ? "Playing" : started ? "Resume" : "Play"
     : started ? "Continue reading" : "Read";
 
   const shareBook = async () => {
@@ -222,6 +224,12 @@ export function BookDetailsView({
       if (error instanceof DOMException && error.name === "AbortError") return;
       setNotice("Unable to share this title.");
     }
+  };
+
+  // Audiobook marks play from their spot in the player bar; ebook marks open the reader there.
+  const openMark = (mark: MarkTarget) => {
+    if (!isAudiobook) return () => onOpenMark(book, mark);
+    return mark.locator ? () => onPlayAt(book, mark.locator || "") : undefined;
   };
 
   const deleteBookmark = async (bookmark: Bookmark) => {
@@ -402,12 +410,18 @@ export function BookDetailsView({
               <ol className="book-details-chapters">
                 {tracks.map((track) => (
                   <li key={track.index} className={track.index === currentTrack && !read ? "is-current" : ""}>
-                    <span className="book-details-chapter-index">{track.index + 1}</span>
-                    <span className="book-details-chapter-title">{track.title || `Part ${track.index + 1}`}</span>
-                    <span className="book-details-chapter-time">
-                      {track.index === currentTrack && !read ? "Up to here · " : ""}
-                      {track.durationSeconds ? formatAudioTime(track.durationSeconds) : ""}
-                    </span>
+                    <button
+                      type="button"
+                      title={`Play from ${track.title || `part ${track.index + 1}`}`}
+                      onClick={() => onPlayAt(book, `audio:${track.index}:0`)}
+                    >
+                      <span className="book-details-chapter-index">{track.index + 1}</span>
+                      <span className="book-details-chapter-title">{track.title || `Part ${track.index + 1}`}</span>
+                      <span className="book-details-chapter-time">
+                        {track.index === currentTrack && !read ? "Up to here · " : ""}
+                        {track.durationSeconds ? formatAudioTime(track.durationSeconds) : ""}
+                      </span>
+                    </button>
                   </li>
                 ))}
               </ol>
@@ -415,10 +429,10 @@ export function BookDetailsView({
           ) : null}
 
           {loadState === "ready" ? (
-            <DetailsSection title={isAudiobook ? "Your bookmarks" : "Your bookmarks and notes"} count={bookmarks.length + highlights.length}>
+            <DetailsSection title="Your bookmarks and notes" count={bookmarks.length + highlights.length}>
               {bookmarks.length + highlights.length === 0 ? (
                 <p className="book-details-muted">
-                  {isAudiobook ? "Bookmarks you add while listening show up here." : "Bookmarks and highlights you add while reading show up here."}
+                  {isAudiobook ? "Bookmarks and notes you add while listening show up here." : "Bookmarks and highlights you add while reading show up here."}
                 </p>
               ) : (
                 <ul className="book-details-marks">
@@ -428,7 +442,7 @@ export function BookDetailsView({
                       icon={<BookmarkIcon size={16} />}
                       title={bookmark.label || `Bookmark at ${formatPercent(bookmark.percent)}`}
                       detail={`${formatPercent(bookmark.percent)} · ${formatShortDate(bookmark.createdAt)}`}
-                      onOpen={isAudiobook ? undefined : () => onOpenMark(book, bookmark)}
+                      onOpen={openMark(bookmark)}
                       onDelete={() => void deleteBookmark(bookmark)}
                     />
                   ))}
@@ -436,9 +450,9 @@ export function BookDetailsView({
                     <MarkRow
                       key={highlight.id}
                       icon={<span className="book-details-highlight-swatch" />}
-                      title={`“${highlight.text}”`}
-                      detail={[highlight.note, formatShortDate(highlight.createdAt)].filter(Boolean).join(" · ")}
-                      onOpen={isAudiobook ? undefined : () => onOpenMark(book, highlight)}
+                      title={isAudiobook ? highlight.note || highlight.text : `“${highlight.text}”`}
+                      detail={[isAudiobook ? (highlight.note ? highlight.text : "") : highlight.note, formatShortDate(highlight.createdAt)].filter(Boolean).join(" · ")}
+                      onOpen={openMark(highlight)}
                     />
                   ))}
                 </ul>

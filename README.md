@@ -89,6 +89,7 @@ Use the compose file as a starting point or create a Docker template ([`unraid/m
 - `TRUST_PROXY=true` when running behind a reverse proxy or tunnel
 - `COOKIE_SECURE=true` when the public URL uses HTTPS
 - `PUBLIC_URL=https://books.example.com` so clients and invitations advertise the externally reachable server endpoint
+- `CAST_APP_ID=ABCD1234` to cast to Shelf's own TV screen; register a Custom Receiver at `<PUBLIC_URL>/cast-receiver.html` in the Google Cast SDK Developer Console to get the ID. Casting needs `PUBLIC_URL` to be the HTTPS address the Chromecast can reach.
 - `REGISTRATION_ENABLED=true` to allow self-service reader signup from the login page
 - `REGISTRATION_REQUIRE_EMAIL_NOTIFY=true` to block production self-signup unless SMTP is configured
 - `REGISTRATION_NOTIFY_EMAIL=you@example.com` for registration attempt notifications (defaults to the `EMAIL_FROM` sender address when unset)

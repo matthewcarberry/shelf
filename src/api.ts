@@ -483,7 +483,7 @@ export async function getPreferences(): Promise<ReaderPreferences> {
 }
 
 export async function savePreferences(
-  preferences: ReaderPreferences
+  preferences: Partial<ReaderPreferences>
 ): Promise<ReaderPreferences> {
   const data = await request<{ preferences: ReaderPreferences }>("/api/preferences", {
     method: "PUT",
