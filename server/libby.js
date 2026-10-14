@@ -77,6 +77,10 @@ export function createLibbyApi({ fetchImpl = globalThis.fetch } = {}) {
   return {
     send,
     createChip: () => json("chip?client=dewey", { method: "POST" }),
+    // Re-issues the chip's token, which picks up an account another device has just copied onto it.
+    refreshChip: (token) => json("chip?client=dewey", { token, method: "POST" }),
+    // Asks Libby for a code that the person types into Libby to copy their account onto this chip.
+    generateCloneCode: (token) => json("chip/clone/code", { token }),
     cloneByCode: (token, code) => json("chip/clone/code", { token, method: "POST", form: { code } }),
     sync: (token) => json("chip/sync", { token }),
     openLoan: (token, type, cardId, titleId) =>
@@ -241,6 +245,7 @@ export class LibbyService {
     this.key = crypto.createHash("sha256").update(loadSecret(path.join(dataDir, "libby-secret"))).digest();
     this.syncCache = new Map();
     this.audioSessions = new Map();
+    this.pendingLinks = new Map();
   }
 
   encrypt(value) {
@@ -288,8 +293,51 @@ export class LibbyService {
     return this.status(userId);
   }
 
+  // Libby's current apps link a new device the other way round: shelf shows a code and you
+  // type it into Libby (Menu > Copy To Another Device), which copies your account onto shelf.
+  async startLink(userId) {
+    const chip = await this.api.createChip();
+    if (!chip?.identity) throw new LibbyError("Libby didn't start a session");
+    const result = await this.api.generateCloneCode(chip.identity);
+    const code = String(result?.code || "");
+    if (!isValidSetupCode(code)) throw new LibbyError("Libby didn't give shelf a code");
+    const expiresAt = Number(result.expiry) > 0 ? Number(result.expiry) * 1000 : this.now() + 60 * 1000;
+    this.pendingLinks.set(userId, { token: chip.identity, code, expiresAt });
+    return { state: "waiting", code, expiresAt: new Date(expiresAt).toISOString() };
+  }
+
+  async checkLink(userId) {
+    const pending = this.pendingLinks.get(userId);
+    if (!pending) return { state: "none" };
+    let token = pending.token;
+    try {
+      token = (await this.api.refreshChip(token))?.identity || token;
+    } catch {
+      // Keep the original token; sync below still shows whether the copy has happened.
+    }
+    let state = null;
+    try {
+      state = await this.api.sync(token);
+    } catch (error) {
+      // Until the copy happens, Libby may refuse to sync an empty chip; keep waiting.
+      if (!(error instanceof LibbyError) || error.status !== 409) throw error;
+    }
+    if (state?.result === "synchronized" && state.cards?.length) {
+      this.pendingLinks.delete(userId);
+      await this.store.setLibbyAccount(userId, this.encrypt({ token }));
+      this.syncCache.set(userId, { at: this.now(), state });
+      return { state: "linked", ...this.status(userId) };
+    }
+    if (this.now() >= pending.expiresAt) {
+      this.pendingLinks.delete(userId);
+      return { state: "expired" };
+    }
+    return { state: "waiting", code: pending.code, expiresAt: new Date(pending.expiresAt).toISOString() };
+  }
+
   async unlink(userId) {
     await this.store.deleteLibbyAccount(userId);
+    this.pendingLinks.delete(userId);
     this.syncCache.delete(userId);
     this.dropAudioSessions(userId);
     await fs.rm(this.userCacheDir(userId), { recursive: true, force: true });

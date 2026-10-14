@@ -340,6 +340,19 @@ export async function linkLibby(code: string): Promise<LibbyStatus> {
   });
 }
 
+export type LibbyLinkState =
+  | { state: "none" | "expired" }
+  | { state: "waiting"; code: string; expiresAt: string }
+  | ({ state: "linked" } & LibbyStatus);
+
+export async function startLibbyLink(): Promise<LibbyLinkState> {
+  return request<LibbyLinkState>("/api/libby/link/start", { method: "POST" });
+}
+
+export async function checkLibbyLink(): Promise<LibbyLinkState> {
+  return request<LibbyLinkState>("/api/libby/link/check");
+}
+
 export async function unlinkLibby(): Promise<void> {
   await request<void>("/api/libby/link", { method: "DELETE" });
 }
