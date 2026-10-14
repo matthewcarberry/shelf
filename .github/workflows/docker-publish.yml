@@ -23,11 +23,63 @@ jobs:
     permissions:
       contents: write
       packages: write
+      issues: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
 
-      # A push to main releases package.json's version when it has no tag yet: bump the
-      # version in a pull request and merging it tags vX.Y.Z and publishes the release.
+      # Merging a pull request releases a new version. The PR's label picks the bump:
+      # release:major, release:minor, or release:skip for no release; anything else is a
+      # patch. A PR that already changed package.json's version to an untagged one is
+      # released as it is. The bump is committed straight to main by this workflow.
+      - name: Bump version from the merged pull request
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          for label in "release:major|b60205|Merging releases the next major version" \
+                       "release:minor|fbca04|Merging releases the next minor version" \
+                       "release:skip|cfd3d7|Merging does not release a new version"; do
+            IFS='|' read -r name color description <<< "$label"
+            gh label create "$name" --repo "$REPO" --color "$color" --description "$description" 2> /dev/null || true
+          done
+
+          if ! git ls-remote --exit-code --tags origin "refs/tags/v$(node -p "require('./package.json').version")" > /dev/null; then
+            echo "package.json already has an unreleased version, so it is released as it is."
+            exit 0
+          fi
+
+          merged=$(gh api "repos/$REPO/commits/$GITHUB_SHA/pulls" --jq '[.[] | select(.merged_at != null)][0] // empty')
+          pr=$(jq -r '.number // empty' <<< "$merged")
+          labels=$(jq -r '.labels[]?.name' <<< "$merged")
+          if [ -z "$pr" ]; then
+            echo "This push did not come from a merged pull request, so no version is bumped."
+            exit 0
+          fi
+          if grep -qx "release:skip" <<< "$labels"; then
+            echo "PR #$pr is labeled release:skip."
+            exit 0
+          elif grep -qx "release:major" <<< "$labels"; then bump=major
+          elif grep -qx "release:minor" <<< "$labels"; then bump=minor
+          else bump=patch
+          fi
+
+          # Bump on top of main as it is now, in case another merge landed since this run started,
+          # and from the newest release tag when it is ahead of package.json.
+          git fetch origin main
+          git checkout -B main origin/main
+          files=$(node -p "require('./package.json').version")
+          newest=$( (echo "$files"; git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/v||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$') | sort -V | tail -1)
+          version=$(node scripts/bump-version.mjs "$bump" "$newest")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release v$version" -m "$bump bump from #$pr (was v$newest)."
+          git push origin main
+          echo "Bumped to v$version ($bump) for PR #$pr."
+
+      # A push to main releases package.json's version when it has no tag yet, which the
+      # step above makes sure of for merged pull requests.
       - name: Pick release version
         id: release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -84,7 +136,8 @@ jobs:
         env:
           TAG: ${{ steps.release.outputs.tag }}
         run: |
-          git tag "$TAG" "$GITHUB_SHA"
+          # HEAD is the version bump commit when the step above made one.
+          git tag "$TAG" HEAD
           if ! git push origin "refs/tags/$TAG"; then
             # Someone pushed the same tag by hand a moment ago; that push publishes it.
             if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
