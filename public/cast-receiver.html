@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Shelf</title>
+    <!-- Shelf's TV screen for Chromecast. Registered as the Custom Receiver URL in the Google Cast console. -->
+    <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #1b1116;
+      }
+
+      cast-media-player {
+        --background-color: #1b1116;
+        --logo-image: url("/favicon.svg");
+        --splash-image: url("/favicon.svg");
+        --progress-color: #dc5b8f;
+        --font-family: "Rethink Sans", "Google Sans", Roboto, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <cast-media-player></cast-media-player>
+    <script>
+      // Saves listening progress from the TV itself, so it keeps saving after the sender's browser tab closes.
+      // Each queue item carries customData { progressUrl, trackIndex } from POST /api/books/:bookId/cast.
+      const PROGRESS_INTERVAL_MS = 10000;
+      const context = cast.framework.CastReceiverContext.getInstance();
+      const playerManager = context.getPlayerManager();
+      const { EventType } = cast.framework.events;
+      const { PlayerState } = cast.framework.messages;
+
+      function reportProgress() {
+        const data = playerManager.getMediaInformation()?.customData;
+        if (!data?.progressUrl || !Number.isInteger(data.trackIndex)) {
+          return;
+        }
+        const position = playerManager.getCurrentTimeSec();
+        if (!Number.isFinite(position)) {
+          return;
+        }
+        fetch(data.progressUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            trackIndex: data.trackIndex,
+            position,
+            duration: playerManager.getDurationSec()
+          }),
+          keepalive: true
+        }).catch(() => undefined);
+      }
+
+      setInterval(() => {
+        if (playerManager.getPlayerState() === PlayerState.PLAYING) {
+          reportProgress();
+        }
+      }, PROGRESS_INTERVAL_MS);
+      playerManager.addEventListener([EventType.PAUSE, EventType.SEEKED], reportProgress);
+
+      context.start();
+    </script>
+  </body>
+</html>

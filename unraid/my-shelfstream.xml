@@ -33,6 +33,7 @@
   <Config Name="Secure Cookies" Target="COOKIE_SECURE" Default="false" Mode="" Description="Require HTTPS cookies." Type="Variable" Display="advanced" Required="true" Mask="false">false</Config>
   <Config Name="Registration" Target="REGISTRATION_ENABLED" Default="true" Mode="" Description="Allow user registration." Type="Variable" Display="always" Required="true" Mask="false">true</Config>
   <Config Name="Registration Email Notification" Target="REGISTRATION_REQUIRE_EMAIL_NOTIFY" Default="true" Mode="" Description="Notify the configured address about registrations." Type="Variable" Display="advanced" Required="true" Mask="false">true</Config>
+  <Config Name="Cast App ID" Target="CAST_APP_ID" Default="" Mode="" Description="Google Cast application ID for Shelf's TV screen. Leave empty to use Google's default receiver." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="Registration Notification Address" Target="REGISTRATION_NOTIFY_EMAIL" Default="" Mode="" Description="Recipient for registration notifications." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="Registration Attempts" Target="REGISTRATION_MAX_ATTEMPTS" Default="5" Mode="" Description="Maximum registration attempts." Type="Variable" Display="advanced" Required="true" Mask="false">5</Config>
   <Config Name="SMTP Host" Target="SMTP_HOST" Default="" Mode="" Description="Outgoing mail server." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
