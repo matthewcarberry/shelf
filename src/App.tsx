@@ -156,6 +156,7 @@ import {
   removeOfflineAudiobook,
   storeAudiobookOffline
 } from "./offline";
+import { BookDetailsView, bookDetailsPath, bookIdFromPath, type MarkTarget } from "./BookDetails";
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -249,7 +250,7 @@ function viewForMediaType(mediaType: MediaType): LibraryViewType {
   return mediaType === "audiobook" ? "audiobooks" : "ebooks";
 }
 
-function isSendableEpub(book: Book) {
+export function isSendableEpub(book: Book) {
   return book.mediaType === "ebook" && book.ext.toLowerCase() === ".epub";
 }
 
@@ -293,6 +294,7 @@ export function App() {
   const [readerOpen, setReaderOpen] = useState(false);
   const [listening, setListening] = useState<ListeningSession | null>(null);
   const [playerExpanded, setPlayerExpanded] = useState(false);
+  const [detailsBookId, setDetailsBookId] = useState<string | null>(() => bookIdFromPath(window.location.pathname));
   const [usersOpen, setUsersOpen] = useState(false);
   const [serverSettingsOpen, setServerSettingsOpen] = useState(false);
   const [serverAccessOpen, setServerAccessOpen] = useState(false);
@@ -902,6 +904,17 @@ export function App() {
     }
   };
 
+  const handleDeleteBookBookmark = async (bookId: string, bookmark: Bookmark) => {
+    try {
+      await deleteBookmark(bookId, bookmark.id);
+      updateBookmarksFor(bookId, (bookmarks) => bookmarks.filter((item) => item.id !== bookmark.id));
+      void refreshProfile().catch(() => undefined);
+    } catch (error) {
+      handleError(error, "Unable to delete bookmark");
+      throw error;
+    }
+  };
+
   const handleDeleteHighlight = async (highlight: Highlight) => {
     if (!activeBookId) {
       return;
@@ -929,8 +942,58 @@ export function App() {
     setJumpTarget({ ...target, stamp: Date.now() });
   };
 
+  // The details page has its own address (/books/<id>) so Back, Forward and shared links work.
+  useEffect(() => {
+    const handlePopState = () => {
+      const bookId = bookIdFromPath(window.location.pathname);
+      setDetailsBookId(bookId);
+      if (bookId) {
+        setReaderOpen(false);
+        setPlayerExpanded(false);
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  const openBookDetails = useCallback(
+    (bookId: string) => {
+      const path = bookDetailsPath(bookId);
+      if (window.location.pathname !== path) {
+        window.history.pushState({ shelfDetails: true }, "", path);
+      }
+      setDetailsBookId(bookId);
+      setReaderOpen(false);
+      setPlayerExpanded(false);
+      setSelection(null);
+      setDictionary(null);
+      if (isCompactLayout) {
+        setSidebarOpen(false);
+      }
+    },
+    [isCompactLayout]
+  );
+
+  // Moving to another part of Shelf from the details page adds a history entry, so Back returns to it.
+  const leaveBookDetails = useCallback(() => {
+    if (bookIdFromPath(window.location.pathname)) {
+      window.history.pushState(null, "", "/");
+    }
+    setDetailsBookId(null);
+  }, []);
+
+  const closeBookDetails = useCallback(() => {
+    if ((window.history.state as { shelfDetails?: boolean } | null)?.shelfDetails) {
+      window.history.back();
+      return;
+    }
+    window.history.replaceState(null, "", "/");
+    setDetailsBookId(null);
+  }, []);
+
   const handleViewSelect = useCallback(
     (view: MainView) => {
+      leaveBookDetails();
       setActiveView(view);
       if (view === "ebooks" || view === "audiobooks") {
         setAuthorFilter(null);
@@ -947,11 +1010,12 @@ export function App() {
         setSidebarOpen(false);
       }
     },
-    [handleError, isCompactLayout, refreshProfile]
+    [handleError, isCompactLayout, leaveBookDetails, refreshProfile]
   );
 
   const handleAuthorSelect = useCallback(
     (author: string, mediaType: MediaType) => {
+      leaveBookDetails();
       setAuthorFilter(author.trim() || "Unknown author");
       setQuery("");
       setActiveView(viewForMediaType(mediaType));
@@ -962,7 +1026,7 @@ export function App() {
         setSidebarOpen(false);
       }
     },
-    [isCompactLayout]
+    [isCompactLayout, leaveBookDetails]
   );
 
   const handleReadBook = useCallback(
@@ -983,7 +1047,7 @@ export function App() {
   );
 
   const handleOpenProfileMark = useCallback(
-    async (book: Book, highlight: Highlight) => {
+    async (book: Book, highlight: MarkTarget) => {
       if (isCompactLayout) {
         setSidebarOpen(false);
       }
@@ -1141,6 +1205,10 @@ export function App() {
       }
       setMetadataBook((current) => (current?.id === book.id ? null : current));
       setArtworkBook((current) => (current?.id === book.id ? null : current));
+      if (bookIdFromPath(window.location.pathname) === book.id) {
+        window.history.replaceState(null, "", "/");
+        setDetailsBookId(null);
+      }
       void refreshProfile().catch(() => undefined);
       setMessage("Title deleted.");
     } catch (error) {
@@ -1264,6 +1332,7 @@ export function App() {
   };
 
   const handleLibrarySelect = (library: ShelfLibrary) => {
+    leaveBookDetails();
     setActiveLibraryId(library.id);
     setQuery("");
     setAuthorFilter(null);
@@ -1345,6 +1414,7 @@ export function App() {
     ? (activeViewCount === 1 ? "completed" : "completed")
     : (activeViewCount === 1 ? "title" : "titles");
   const isPlayerExpanded = Boolean(listening) && playerExpanded;
+  const showBookDetails = hasCurrentServerAccess && detailsBookId !== null;
   const isReaderFocused = (activeLibraryType !== null && readerOpen) || isPlayerExpanded;
   const hasMiniPlayer = Boolean(listening) && !isPlayerExpanded;
 
@@ -1488,7 +1558,7 @@ export function App() {
               <small>{activeViewCount} {activeViewCountLabel}</small>
             </div>
             {hasCurrentServerAccess ? (
-              <GlobalSearch books={books} onOpenBook={handleReadBook} />
+              <GlobalSearch books={books} onOpenBook={openBookDetails} />
             ) : null}
             <div className="top-actions">
               {canManageServer ? (
@@ -1517,7 +1587,41 @@ export function App() {
 
         {message ? <div className="message-bar">{message}</div> : null}
 
-        {!isPlayerExpanded ? (<>
+        {!isPlayerExpanded && showBookDetails && detailsBookId ? (
+          <BookDetailsView
+            bookId={detailsBookId}
+            books={books}
+            canManageBook={canManageServer}
+            inReadList={readListIds.has(detailsBookId)}
+            nowPlaying={listening?.bookId === detailsBookId}
+            onBack={closeBookDetails}
+            onOpenBook={openBookDetails}
+            onStart={(book) => {
+              if (book.mediaType === "audiobook") {
+                void handleListen(book.id);
+                return;
+              }
+              leaveBookDetails();
+              handleReadBook(book.id);
+            }}
+            onOpenMark={(book, target) => {
+              leaveBookDetails();
+              void handleOpenProfileMark(book, target);
+            }}
+            onAuthorSelect={handleAuthorSelect}
+            onSetReadState={(bookId, read) => void handleSetBookReadState(bookId, read)}
+            onToggleReadList={(bookId) => void handleToggleReadList(bookId)}
+            onEditBook={(book) => setMetadataBook(book)}
+            onGetArtwork={(book) => setArtworkBook(book)}
+            onDeleteBook={(book) => void handleDeleteBook(book)}
+            onSendToKindle={(book) => void handleOpenSendToKindle(book)}
+            onDeleteBookmark={handleDeleteBookBookmark}
+            onReviewSaved={() => void refreshProfile().catch(() => undefined)}
+            onError={handleError}
+          />
+        ) : null}
+
+        {!isPlayerExpanded && !showBookDetails ? (<>
         {!hasCurrentServerAccess && platformOverview ? (
           <ServerOnboarding
             accountName={platformOverview.account.displayName}
@@ -1552,7 +1656,8 @@ export function App() {
           <HomeView
             books={books}
             canManageBooks={canManageServer}
-            onReadBook={handleReadBook}
+            onReadBook={openBookDetails}
+            onStartBook={handleReadBook}
             onAuthorSelect={handleAuthorSelect}
             onSetReadState={(bookId, read) => void handleSetBookReadState(bookId, read)}
             onEditBook={(book) => setMetadataBook(book)}
@@ -1592,7 +1697,8 @@ export function App() {
             canManageBooks={canManageServer}
             onQueryChange={setQuery}
             onClearAuthorFilter={() => setAuthorFilter(null)}
-            onReadBook={handleReadBook}
+            onReadBook={openBookDetails}
+            onStartBook={handleReadBook}
             onAuthorSelect={handleAuthorSelect}
             onSetReadState={(bookId, read) => void handleSetBookReadState(bookId, read)}
             onEditBook={(book) => setMetadataBook(book)}
@@ -1625,7 +1731,7 @@ export function App() {
             profile={profile}
             loading={profileLoading}
             fallbackUser={auth.user}
-            onOpenBook={handleReadBook}
+            onOpenBook={openBookDetails}
             onOpenMark={(book, highlight) => void handleOpenProfileMark(book, highlight)}
             onToggleReadList={(bookId) => void handleToggleReadList(bookId)}
             onEditProfile={() => setAccountOpen(true)}
@@ -3447,6 +3553,7 @@ function HomeView({
   books,
   canManageBooks,
   onReadBook,
+  onStartBook,
   onAuthorSelect,
   onSetReadState,
   onEditBook,
@@ -3461,6 +3568,7 @@ function HomeView({
   books: Book[];
   canManageBooks: boolean;
   onReadBook: (bookId: string) => void;
+  onStartBook: (bookId: string) => void;
   onAuthorSelect: (author: string, mediaType: MediaType) => void;
   onSetReadState: (bookId: string, read: boolean) => void;
   onEditBook: (book: Book) => void;
@@ -3521,6 +3629,7 @@ function HomeView({
           books={continueReading}
           canManageBooks={canManageBooks}
           onReadBook={onReadBook}
+          onStartBook={onStartBook}
           onAuthorSelect={onAuthorSelect}
           onSetReadState={onSetReadState}
           onEditBook={onEditBook}
@@ -3535,6 +3644,7 @@ function HomeView({
         books={recentlyAdded}
         canManageBooks={canManageBooks}
         onReadBook={onReadBook}
+        onStartBook={onStartBook}
         onAuthorSelect={onAuthorSelect}
         onSetReadState={onSetReadState}
         onEditBook={onEditBook}
@@ -3552,6 +3662,7 @@ function HomeShelfRow({
   books,
   canManageBooks,
   onReadBook,
+  onStartBook,
   onAuthorSelect,
   onSetReadState,
   onEditBook,
@@ -3564,6 +3675,7 @@ function HomeShelfRow({
   books: Book[];
   canManageBooks: boolean;
   onReadBook: (bookId: string) => void;
+  onStartBook: (bookId: string) => void;
   onAuthorSelect: (author: string, mediaType: MediaType) => void;
   onSetReadState: (bookId: string, read: boolean) => void;
   onEditBook: (book: Book) => void;
@@ -3585,6 +3697,7 @@ function HomeShelfRow({
               book={book}
               canManageBook={canManageBooks}
               onOpen={() => onReadBook(book.id)}
+              onStart={() => onStartBook(book.id)}
               onSetReadState={(read) => onSetReadState(book.id, read)}
               onEditMetadata={() => onEditBook(book)}
               onGetArtwork={() => onGetArtwork(book)}
@@ -3914,6 +4027,7 @@ function LibraryView({
   onQueryChange,
   onClearAuthorFilter,
   onReadBook,
+  onStartBook,
   onAuthorSelect,
   onSetReadState,
   onEditBook,
@@ -3954,6 +4068,7 @@ function LibraryView({
   onQueryChange: (value: string) => void;
   onClearAuthorFilter: () => void;
   onReadBook: (bookId: string) => void;
+  onStartBook: (bookId: string) => void;
   onAuthorSelect: (author: string, mediaType: MediaType) => void;
   onSetReadState: (bookId: string, read: boolean) => void;
   onEditBook: (book: Book) => void;
@@ -4159,6 +4274,7 @@ function LibraryView({
             layout={layout}
             canManageBook={canManageBooks}
             onRead={onReadBook}
+            onStart={onStartBook}
             onAuthorSelect={(author) => onAuthorSelect(author, mediaType)}
             onSetReadState={onSetReadState}
             onEditBook={onEditBook}
@@ -4187,6 +4303,7 @@ function LibraryBookCard({
   layout,
   canManageBook,
   onRead,
+  onStart,
   onAuthorSelect,
   onSetReadState,
   onEditBook,
@@ -4201,6 +4318,7 @@ function LibraryBookCard({
   layout: LibraryLayoutMode;
   canManageBook: boolean;
   onRead: (bookId: string) => void;
+  onStart: (bookId: string) => void;
   onAuthorSelect: (author: string) => void;
   onSetReadState: (bookId: string, read: boolean) => void;
   onEditBook: (book: Book) => void;
@@ -4219,6 +4337,7 @@ function LibraryBookCard({
           book={book}
           canManageBook={canManageBook}
           onOpen={() => onRead(book.id)}
+          onStart={() => onStart(book.id)}
           onSetReadState={(read) => onSetReadState(book.id, read)}
           onEditMetadata={() => onEditBook(book)}
           onGetArtwork={() => onGetArtwork(book)}
@@ -4276,6 +4395,7 @@ function BookCoverFrame({
   book,
   canManageBook,
   onOpen,
+  onStart,
   onSetReadState,
   onEditMetadata,
   onGetArtwork,
@@ -4286,6 +4406,7 @@ function BookCoverFrame({
   book: Book;
   canManageBook: boolean;
   onOpen: () => void;
+  onStart: () => void;
   onSetReadState: (read: boolean) => void;
   onEditMetadata: () => void;
   onGetArtwork: () => void;
@@ -4318,9 +4439,6 @@ function BookCoverFrame({
         onClick={onOpen}
       >
         <BookCover book={book} />
-        <span className="book-cover-play-overlay" aria-hidden="true">
-          <Play size={26} fill="currentColor" />
-        </span>
       </button>
 
       {read ? (
@@ -4341,6 +4459,16 @@ function BookCoverFrame({
 
       {menuOpen ? (
         <div className="book-cover-menu" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMenuOpen(false);
+              onStart();
+            }}
+          >
+            {book.mediaType === "audiobook" ? "Play now" : "Read now"}
+          </button>
           <button
             type="button"
             role="menuitem"
@@ -4414,7 +4542,7 @@ function BookCoverFrame({
   );
 }
 
-function BookCover({ book, fit = "cover" }: { book: Book; fit?: "cover" | "contain" }) {
+export function BookCover({ book, fit = "cover" }: { book: Book; fit?: "cover" | "contain" }) {
   const [failed, setFailed] = useState(false);
   const showImage = Boolean(book.coverUrl) && !failed;
 
@@ -5477,7 +5605,7 @@ function initialAudioTrack(progress: ProgressState | null, tracks: ReaderInfo["a
   return 0;
 }
 
-function formatAudioTime(value: number) {
+export function formatAudioTime(value: number) {
   const total = Math.max(0, Math.round(Number.isFinite(value) ? value : 0));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
@@ -7146,7 +7274,7 @@ async function searchPdfDocument(fileUrl: string, term: string) {
   return results;
 }
 
-function ReviewPanel({
+export function ReviewPanel({
   myReview,
   reviews,
   onSave
@@ -7798,7 +7926,7 @@ function formatProfileDate(value?: string | null) {
   }).format(parsed);
 }
 
-function formatShortDate(value?: string | null) {
+export function formatShortDate(value?: string | null) {
   if (!value) return "soon";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "soon";
@@ -7883,7 +8011,7 @@ function matchesLibraryFilter(book: Book, filter: LibraryFilterMode) {
   return true;
 }
 
-function isBookRead(book: Book) {
+export function isBookRead(book: Book) {
   return (book.progress?.percent || 0) >= 0.995;
 }
 
@@ -7940,7 +8068,7 @@ function firstWord(value: string) {
     : "";
 }
 
-function formatPercent(value: number) {
+export function formatPercent(value: number) {
   return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
 }
 
@@ -7963,7 +8091,7 @@ function formatActivityDuration(startedAt: string) {
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
-function formatFileSize(size: number) {
+export function formatFileSize(size: number) {
   if (size < 1024 * 1024) {
     return `${Math.max(1, Math.round(size / 1024))} KB`;
   }
