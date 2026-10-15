@@ -31,7 +31,6 @@ import { ActivityTracker } from "./activity.js";
 import { PlatformService } from "./platform.js";
 import { downloadOpenLibraryCover, searchOpenLibraryArtwork } from "./artwork.js";
 import { createCastLinks } from "./cast.js";
-import { LibbyService, parseLibbyBookId } from "./libby.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -68,7 +67,9 @@ const platform = new PlatformService(store, {
 });
 await platform.init();
 const castLinks = createCastLinks(paths.dataDir);
-const libby = new LibbyService(store, paths.dataDir);
+// Libby linking was removed; clear the key and cached loan files it left behind.
+await fs.rm(path.join(paths.dataDir, "libby-cache"), { recursive: true, force: true });
+await fs.rm(path.join(paths.dataDir, "libby-secret"), { force: true });
 // The Google Cast application ID for Shelf's own TV screen; without it senders use Google's default receiver.
 const castReceiverAppId = String(process.env.CAST_APP_ID || "").trim() || null;
 
@@ -551,190 +552,6 @@ app.use("/api", (req, res, next) => {
     return;
   }
   req.serverMembership = membership;
-  next();
-});
-
-app.get("/api/libby", (req, res) => {
-  res.json(libby.status(req.user.id));
-});
-
-app.post("/api/libby/link", async (req, res, next) => {
-  try {
-    res.json(await libby.link(req.user.id, req.body?.code));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/libby/link/start", async (req, res, next) => {
-  try {
-    res.json(await libby.startLink(req.user.id));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.get("/api/libby/link/check", async (req, res, next) => {
-  try {
-    res.json(await libby.checkLink(req.user.id));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.delete("/api/libby/link", async (req, res, next) => {
-  try {
-    await libby.unlink(req.user.id);
-    res.status(204).end();
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.get("/api/libby/loans", async (req, res, next) => {
-  try {
-    const books = await libby.loans(req.user.id, { force: req.query.refresh === "1" });
-    res.json({ ...libby.status(req.user.id), books });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Libby loans use the same /api/books/:bookId routes as library books, so the reader and
-// player work unchanged. They belong to one user and never touch the shared library.
-const libbyBooks = express.Router({ mergeParams: true });
-
-libbyBooks.use(async (req, res, next) => {
-  try {
-    const found = await libby.findLoan(req.user.id, req.params.bookId);
-    if (!found) {
-      res.status(404).json({ error: "This Libby loan has ended or was returned" });
-      return;
-    }
-    req.libbyLoan = found.loan;
-    req.libbyBook = found.book;
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
-libbyBooks.get("/", (req, res) => {
-  res.json({ book: req.libbyBook });
-});
-
-libbyBooks.get("/reader", async (req, res, next) => {
-  try {
-    const book = req.libbyBook;
-    const mode = book.libby.mode;
-    let audioTracks = [];
-    if (mode === "audio") {
-      const session = await libby.audioSession(req.user.id, req.libbyLoan);
-      audioTracks = session.tracks.map(({ upstreamUrl: _upstreamUrl, ...track }) => ({
-        ...track,
-        fileUrl: `/api/books/${book.id}/audio/${track.index}`
-      }));
-      book.trackCount = audioTracks.length;
-      book.durationSeconds = audioTracks.reduce((sum, track) => sum + (track.durationSeconds || 0), 0) || null;
-    }
-    res.json({
-      book,
-      fileUrl: mode === "epub" || mode === "pdf" ? `/api/books/${book.id}/file` : null,
-      format: book.readingFormat,
-      audioTracks,
-      progress: store.getProgress(req.user.id, book.id),
-      bookmarks: store.listBookmarks(req.user.id, book.id),
-      highlights: store.listHighlights(req.user.id, book.id),
-      preferences: store.getPreferences(req.user.id),
-      myReview: null,
-      reviews: []
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-libbyBooks.get("/file", async (req, res, next) => {
-  try {
-    const mode = req.libbyBook.libby.mode;
-    if (mode !== "epub" && mode !== "pdf") {
-      res.status(409).json({ error: "This loan opens in Libby" });
-      return;
-    }
-    const filePath = await libby.openFilePath(req.user.id, req.libbyLoan, mode);
-    streamFile(req, res, filePath, mode === "pdf" ? "application/pdf" : "application/epub+zip");
-  } catch (error) {
-    next(error);
-  }
-});
-
-libbyBooks.get("/audio/:trackIndex", async (req, res, next) => {
-  try {
-    if (req.libbyBook.libby.mode !== "audio") {
-      res.status(404).json({ error: "Audiobook not found" });
-      return;
-    }
-    await libby.streamAudio(req, res, req.user.id, req.libbyLoan, Number.parseInt(req.params.trackIndex, 10));
-  } catch (error) {
-    next(error);
-  }
-});
-
-libbyBooks.put("/progress", async (req, res, next) => {
-  try {
-    res.json({ progress: await store.setProgress(req.user.id, req.libbyBook.id, req.body || {}) });
-  } catch (error) {
-    next(error);
-  }
-});
-
-libbyBooks.post("/bookmarks", async (req, res, next) => {
-  try {
-    res.status(201).json({ bookmark: await store.addBookmark(req.user.id, req.libbyBook.id, req.body || {}) });
-  } catch (error) {
-    next(error);
-  }
-});
-
-libbyBooks.delete("/bookmarks/:bookmarkId", async (req, res, next) => {
-  try {
-    await store.deleteBookmark(req.user.id, req.libbyBook.id, req.params.bookmarkId);
-    res.status(204).end();
-  } catch (error) {
-    next(error);
-  }
-});
-
-libbyBooks.post("/highlights", async (req, res, next) => {
-  try {
-    res.status(201).json({ highlight: await store.addHighlight(req.user.id, req.libbyBook.id, req.body || {}) });
-  } catch (error) {
-    next(error);
-  }
-});
-
-libbyBooks.delete("/highlights/:highlightId", async (req, res, next) => {
-  try {
-    await store.deleteHighlight(req.user.id, req.libbyBook.id, req.params.highlightId);
-    res.status(204).end();
-  } catch (error) {
-    next(error);
-  }
-});
-
-libbyBooks.get("/reviews", (_req, res) => {
-  res.json({ myReview: null, reviews: [] });
-});
-
-libbyBooks.use((_req, res) => {
-  res.status(404).json({ error: "Not available for Libby loans" });
-});
-
-app.use("/api/books/:bookId", (req, res, next) => {
-  if (parseLibbyBookId(req.params.bookId)) {
-    libbyBooks(req, res, next);
-    return;
-  }
   next();
 });
 
