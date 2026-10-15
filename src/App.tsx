@@ -116,6 +116,9 @@ import {
   saveReview,
   savePreferences,
   savePlatformPreferences,
+  scanLibrary,
+  getLibraryScanSettings,
+  updateLibraryScanSettings,
   saveProgress,
   sendBookToKindle,
   searchBookArtwork,
@@ -130,6 +133,7 @@ import {
   updateReadingActivity,
   updateUserPassword
 } from "./api";
+import type { LibraryScanSettings, LibraryScanState } from "./api";
 import type {
   Alignment,
   ArtworkCandidate,
@@ -346,6 +350,7 @@ export function App() {
   const [kindleSending, setKindleSending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [libraryScanning, setLibraryScanning] = useState(false);
   const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null);
   const progressTimerRef = useRef<number | null>(null);
   const listeningProgressTimerRef = useRef<number | null>(null);
@@ -1551,6 +1556,21 @@ export function App() {
     }
   };
 
+  const handleLibraryScan = async () => {
+    if (libraryScanning) return;
+    setLibraryScanning(true);
+    setMessage("Scanning library files…");
+    try {
+      const scanned = await scanLibrary();
+      await Promise.all([refreshBooks(), refreshPlatform()]);
+      setMessage(`Library scan complete: ${scanned.length} titles.`);
+    } catch (error) {
+      handleError(error, "Unable to scan library files");
+    } finally {
+      setLibraryScanning(false);
+    }
+  };
+
   const handleLibrarySelect = (library: ShelfLibrary) => {
     leaveBookDetails();
     setActiveLibraryId(library.id);
@@ -1687,12 +1707,15 @@ export function App() {
               />
               <span className="sidebar-section-label">Libraries</span>
               {availableLibraries.map((library) => (
-                <SidebarNavButton
+                <SidebarLibraryItem
                   key={library.id}
                   active={activeLibraryId === library.id && activeLibraryType !== null}
                   icon={library.mediaType === "audiobook" ? <Headphones size={19} /> : <BookOpen size={19} />}
                   label={library.name}
+                  canScan={canManageServer}
+                  scanning={libraryScanning}
                   onClick={() => handleLibrarySelect(library)}
+                  onScan={() => void handleLibraryScan()}
                 />
               ))}
               <span className="sidebar-section-label">You</span>
@@ -2395,6 +2418,71 @@ function SidebarNavButton({
       <span className="sidebar-nav-icon">{icon}</span>
       <span className="sidebar-label">{label}</span>
     </button>
+  );
+}
+
+function SidebarLibraryItem({
+  active,
+  icon,
+  label,
+  canScan,
+  scanning,
+  onClick,
+  onScan
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  label: string;
+  canScan: boolean;
+  scanning: boolean;
+  onClick: () => void;
+  onScan: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  return (
+    <div
+      className={`sidebar-library-item ${menuOpen ? "is-menu-open" : ""}`}
+      onBlur={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+          setMenuOpen(false);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          setMenuOpen(false);
+        }
+      }}
+    >
+      <SidebarNavButton active={active} icon={icon} label={label} onClick={onClick} />
+      {canScan ? (
+        <button
+          type="button"
+          className="sidebar-library-menu-button"
+          aria-label={`More actions for ${label}`}
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((value) => !value)}
+        >
+          {scanning ? <RefreshCw size={16} className="spin" /> : <MoreVertical size={16} />}
+        </button>
+      ) : null}
+      {canScan && menuOpen ? (
+        <div className="sidebar-library-menu" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            disabled={scanning}
+            onClick={() => {
+              setMenuOpen(false);
+              onScan();
+            }}
+          >
+            {scanning ? "Scanning…" : "Scan Library Files"}
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -3687,6 +3775,72 @@ function UserManagementPanel({
   );
 }
 
+const SCAN_INTERVAL_OPTIONS = [
+  { minutes: 15, label: "every 15 minutes" },
+  { minutes: 30, label: "every 30 minutes" },
+  { minutes: 60, label: "hourly" },
+  { minutes: 120, label: "every 2 hours" },
+  { minutes: 360, label: "every 6 hours" },
+  { minutes: 720, label: "every 12 hours" },
+  { minutes: 1440, label: "daily" }
+];
+
+function LibraryScanSettingsSection({ onError }: { onError: (error: unknown, fallback: string) => void }) {
+  const [state, setState] = useState<LibraryScanState | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    getLibraryScanSettings()
+      .then(setState)
+      .catch((error) => onError(error, "Unable to load library scan settings"));
+  }, [onError]);
+
+  const save = async (patch: Partial<LibraryScanSettings>) => {
+    setSaving(true);
+    try {
+      setState(await updateLibraryScanSettings(patch));
+    } catch (error) {
+      onError(error, "Unable to save library scan settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const settings = state?.settings;
+  return (
+    <section className="server-settings-section library-scan-settings">
+      <div className="server-settings-heading">
+        <div><h3>Library scanning</h3><p>Choose when Shelf looks for new and changed files in the library folder.</p></div>
+      </div>
+      {settings ? (
+        <div className="library-scan-options">
+          <label>
+            <input type="checkbox" checked={settings.autoScan} disabled={saving} onChange={(event) => void save({ autoScan: event.target.checked })} />
+            <span><strong>Scan my library automatically</strong><small>Your library will be updated automatically when changes to library folders are detected.</small></span>
+          </label>
+          <label>
+            <input type="checkbox" checked={settings.partialScan} disabled={saving || !settings.autoScan} onChange={(event) => void save({ partialScan: event.target.checked })} />
+            <span><strong>Run a partial scan when changes are detected</strong><small>When changes to library folders are detected, only scan the folder that changed.</small></span>
+          </label>
+          <label>
+            <input type="checkbox" checked={settings.periodicScan} disabled={saving} onChange={(event) => void save({ periodicScan: event.target.checked })} />
+            <span><strong>Scan my library periodically</strong><small>Runs a full scan on a schedule, which also catches changes the folder watcher misses.</small></span>
+          </label>
+          <label className="library-scan-interval">
+            <span>Library scan interval</span>
+            <select value={settings.scanIntervalMinutes} disabled={saving || !settings.periodicScan} onChange={(event) => void save({ scanIntervalMinutes: Number(event.target.value) })}>
+              {SCAN_INTERVAL_OPTIONS.map((option) => <option key={option.minutes} value={option.minutes}>{option.label}</option>)}
+            </select>
+          </label>
+          {settings.autoScan && state.watcher.error ? (
+            <small className="library-scan-warning">Shelf couldn't watch the library folder: {state.watcher.error}. Turn on periodic scanning instead.</small>
+          ) : null}
+        </div>
+      ) : <small>Loading…</small>}
+    </section>
+  );
+}
+
 function ServerSettingsPanel({
   server,
   currentAccountId,
@@ -3854,6 +4008,8 @@ function ServerSettingsPanel({
             <button type="submit" className="secondary-button" disabled={loading || !libraryForm.name.trim()}><FolderPlus size={16} />Add library</button>
           </form>
         </section>
+
+        <LibraryScanSettingsSection onError={onError} />
 
         <section className="server-settings-section">
           <div className="server-settings-heading">

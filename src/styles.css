@@ -5864,3 +5864,124 @@ button.book-details-mark:focus-visible {
 .libby-shelf .library-empty {
   grid-column: 1 / -1;
 }
+
+.sidebar-library-item {
+  position: relative;
+  min-width: 0;
+}
+
+.sidebar-library-item .sidebar-nav-item {
+  padding-right: 36px;
+}
+
+.sidebar-library-menu-button {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  background: transparent;
+  opacity: 0;
+  transform: translateY(-50%);
+}
+
+.sidebar-library-item:hover .sidebar-library-menu-button,
+.sidebar-library-item.is-menu-open .sidebar-library-menu-button,
+.sidebar-library-menu-button:focus-visible {
+  opacity: 1;
+}
+
+.sidebar-library-menu-button:hover,
+.sidebar-library-item.is-menu-open .sidebar-library-menu-button {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.sidebar-library-menu {
+  position: absolute;
+  z-index: 25;
+  top: calc(100% + 4px);
+  right: 0;
+  display: grid;
+  width: 190px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.sidebar-library-menu button {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--ink);
+  text-align: left;
+  background: transparent;
+  font-weight: 800;
+}
+
+.sidebar-library-menu button:hover,
+.sidebar-library-menu button:focus-visible {
+  background: var(--accent-soft);
+}
+
+.sidebar-library-menu button:disabled {
+  color: var(--muted);
+}
+
+.sidebar-collapsed .sidebar-library-menu-button,
+.sidebar-collapsed .sidebar-library-menu {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-library-item .sidebar-nav-item {
+  padding-right: 2px;
+}
+
+@media (hover: none) {
+  .sidebar-library-menu-button {
+    opacity: 1;
+  }
+}
+
+.library-scan-options {
+  display: grid;
+  gap: 14px;
+}
+
+.library-scan-options > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.library-scan-options > label input[type="checkbox"] {
+  margin-top: 3px;
+}
+
+.library-scan-options > label > span {
+  display: grid;
+  gap: 2px;
+}
+
+.library-scan-options small {
+  color: var(--muted);
+}
+
+.library-scan-options > label.library-scan-interval {
+  grid-template-columns: auto minmax(0, 220px);
+  justify-content: start;
+  align-items: center;
+}
+
+.library-scan-options .library-scan-warning {
+  color: var(--danger, #b42318);
+}
