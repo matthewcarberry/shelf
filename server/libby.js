@@ -56,7 +56,9 @@ export function createLibbyApi({ fetchImpl = globalThis.fetch } = {}) {
     try {
       response = await fetchImpl(new URL(url, LIBBY_API), { method, headers: requestHeaders, body, redirect: "manual" });
     } catch (error) {
-      throw new LibbyError(`Couldn't reach Libby: ${error.message}`);
+      const cause = error.cause?.code || error.cause?.message;
+      console.error("Libby request failed", String(url).split("?")[0], error.cause || error);
+      throw new LibbyError(`Couldn't reach Libby: ${error.message}${cause ? ` (${cause})` : ""}`);
     }
     return response;
   }
