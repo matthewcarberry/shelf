@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 // Libby has no public API. These are the private endpoints Libby's own web app uses, as
 // documented by the open-source odmpy and libby-calibre-plugin projects. They can change
 // without notice, and using them is against OverDrive's terms; each user opts in by linking.
-const LIBBY_API = "https://sentry-read.svc.overdrive.com/";
+const LIBBY_API = "https://sentry.libbyapp.com/";
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 const SYNC_TTL_MS = 2 * 60 * 1000;
@@ -56,7 +56,9 @@ export function createLibbyApi({ fetchImpl = globalThis.fetch } = {}) {
     try {
       response = await fetchImpl(new URL(url, LIBBY_API), { method, headers: requestHeaders, body, redirect: "manual" });
     } catch (error) {
-      throw new LibbyError(`Couldn't reach Libby: ${error.message}`);
+      const cause = error.cause?.code || error.cause?.message;
+      console.error("Libby request failed", String(url).split("?")[0], error.cause || error);
+      throw new LibbyError(`Couldn't reach Libby: ${error.message}${cause ? ` (${cause})` : ""}`);
     }
     return response;
   }
