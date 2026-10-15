@@ -91,12 +91,6 @@ import {
   getPlatformOverview,
   getPreferences,
   getKindleSettings,
-  checkLibbyLink,
-  getLibbyLoans,
-  getLibbyStatus,
-  linkLibby,
-  startLibbyLink,
-  unlinkLibby,
   getProfile,
   getReaderInfo,
   listActivity,
@@ -145,7 +139,6 @@ import type {
   Highlight,
   JumpTarget,
   KindleSettings,
-  LibbyStatus,
   MediaType,
   PlatformOverview,
   ProfileData,
@@ -225,7 +218,7 @@ function parseAudioLocator(locator?: string | null): { trackIndex: number; track
   const match = /^audio:(\d+):(\d+(?:\.\d+)?)$/.exec(locator || "");
   return match ? { trackIndex: Number(match[1]), trackTime: Number(match[2]) } : null;
 }
-type MainView = "home" | LibraryViewType | "libby" | "profile" | "marks" | "add";
+type MainView = "home" | LibraryViewType | "profile" | "marks" | "add";
 type ReaderPanel = "toc" | "search" | "display" | "marks" | null;
 
 interface ReaderTocItem {
@@ -308,10 +301,6 @@ export function App() {
   const [platformOverview, setPlatformOverview] = useState<PlatformOverview | null>(null);
   const [platformLoading, setPlatformLoading] = useState(false);
   const [books, setBooks] = useState<Book[]>([]);
-  const [libbyBooks, setLibbyBooks] = useState<Book[]>([]);
-  const [libbyStatus, setLibbyStatus] = useState<LibbyStatus | null>(null);
-  const [libbyLoading, setLibbyLoading] = useState(false);
-  const [libbyConnectOpen, setLibbyConnectOpen] = useState(false);
   const [activeLibraryId, setActiveLibraryId] = useState<string | null>(null);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [reader, setReader] = useState<ReaderInfo | null>(null);
@@ -367,8 +356,8 @@ export function App() {
   const listeningSyncedAtRef = useRef("");
 
   const activeBook = useMemo(
-    () => books.find((book) => book.id === activeBookId) || libbyBooks.find((book) => book.id === activeBookId) || null,
-    [activeBookId, books, libbyBooks]
+    () => books.find((book) => book.id === activeBookId) || null,
+    [activeBookId, books]
   );
 
   const activeServer = useMemo(
@@ -433,22 +422,6 @@ export function App() {
       return next;
     } finally {
       setProfileLoading(false);
-    }
-  }, []);
-
-  const refreshLibby = useCallback(async (refresh = false) => {
-    setLibbyLoading(true);
-    try {
-      const { books: loans, ...status } = await getLibbyLoans(refresh);
-      setLibbyStatus(status);
-      setLibbyBooks(loans);
-    } catch (error) {
-      // An unlinked account isn't an error here; the Libby page offers to link it.
-      setLibbyBooks([]);
-      setLibbyStatus((current) => current || { linked: false, linkedAt: null, libraries: [] });
-      throw error;
-    } finally {
-      setLibbyLoading(false);
     }
   }, []);
 
@@ -734,9 +707,6 @@ export function App() {
       setBooks((items) =>
         items.map((book) => (book.id === activeBookId ? { ...book, progress } : book))
       );
-      setLibbyBooks((items) =>
-        items.map((book) => (book.id === activeBookId ? { ...book, progress } : book))
-      );
 
       if (progressTimerRef.current) {
         window.clearTimeout(progressTimerRef.current);
@@ -761,9 +731,6 @@ export function App() {
 
       listeningProgressRef.current = progress;
       setBooks((items) =>
-        items.map((book) => (book.id === listeningBookId ? { ...book, progress } : book))
-      );
-      setLibbyBooks((items) =>
         items.map((book) => (book.id === listeningBookId ? { ...book, progress } : book))
       );
 
@@ -1184,54 +1151,11 @@ export function App() {
       if (view === "profile") {
         void refreshProfile().catch((error) => handleError(error, "Unable to load profile"));
       }
-      if (view === "libby") {
-        void refreshLibby().catch((error) => {
-          if (!(error instanceof Error) || !/Link your Libby account first/.test(error.message)) {
-            handleError(error, "Unable to load Libby loans");
-          }
-        });
-      }
       if (isCompactLayout) {
         setSidebarOpen(false);
       }
     },
-    [handleError, isCompactLayout, leaveBookDetails, refreshLibby, refreshProfile]
-  );
-
-  // After linking, go straight to the loans.
-  const handleLibbyLinked = useCallback(async () => {
-    setLibbyConnectOpen(false);
-    setActiveView("libby");
-    setReaderOpen(false);
-    await refreshLibby(true).catch((error) => handleError(error, "Unable to load Libby loans"));
-  }, [handleError, refreshLibby]);
-
-  useEffect(() => {
-    if (!hasCurrentServerAccess || libbyStatus) return;
-    void getLibbyStatus().then(setLibbyStatus).catch(() => undefined);
-  }, [hasCurrentServerAccess, libbyStatus]);
-
-  // Audiobooks play in the bar, open EPUB/PDF loans open in shelf's reader, and the rest open in Libby.
-  const handleStartLibbyLoan = useCallback(
-    (book: Book) => {
-      const mode = book.libby?.mode;
-      if (mode === "audio") {
-        void handleListen(book.id);
-        return;
-      }
-      if (mode === "epub" || mode === "pdf") {
-        if (isCompactLayout) {
-          setSidebarOpen(false);
-        }
-        setReaderOpen(true);
-        void openBook(book.id);
-        return;
-      }
-      if (book.libby?.libbyUrl) {
-        window.open(book.libby.libbyUrl, "_blank", "noopener");
-      }
-    },
-    [handleListen, isCompactLayout, openBook]
+    [handleError, isCompactLayout, leaveBookDetails, refreshProfile]
   );
 
   const handleAuthorSelect = useCallback(
@@ -1649,17 +1573,12 @@ export function App() {
     ? libraryScopedBooks.length
     : activeView === "profile"
       ? (profile?.stats.booksRead || 0) + (profile?.stats.audiobooksListened || 0)
-      : activeView === "libby"
-        ? libbyBooks.length
-        : books.length;
+      : books.length;
   const activeViewCountLabel = activeView === "profile"
     ? (activeViewCount === 1 ? "completed" : "completed")
-    : activeView === "libby"
-      ? (activeViewCount === 1 ? "loan" : "loans")
-      : (activeViewCount === 1 ? "title" : "titles");
+    : (activeViewCount === 1 ? "title" : "titles");
   const showBookDetails = hasCurrentServerAccess && detailsBookId !== null;
-  const isLibbyReading = activeView === "libby" && readerOpen;
-  const isReaderFocused = (activeLibraryType !== null || isLibbyReading) && readerOpen;
+  const isReaderFocused = activeLibraryType !== null && readerOpen;
 
   return (
     <div className={`app-shell theme-${preferences.theme} ${sidebarOpen ? "sidebar-expanded" : "sidebar-collapsed"} ${isReaderFocused ? "reader-focus" : ""} ${listening ? "has-player-bar" : ""}`}>
@@ -1731,14 +1650,6 @@ export function App() {
                 label="Notes & Highlights"
                 onClick={() => handleViewSelect("marks")}
               />
-              {libbyStatus?.linked ? (
-                <SidebarNavButton
-                  active={activeView === "libby"}
-                  icon={<Library size={19} />}
-                  label="Libby loans"
-                  onClick={() => handleViewSelect("libby")}
-                />
-              ) : null}
               {canManageServer ? (
                 <SidebarNavButton
                   active={activeView === "add"}
@@ -1785,13 +1696,6 @@ export function App() {
           onManageAccess={() => {
             setUserMenuOpen(false);
             setServerAccessOpen(true);
-          }}
-          onConnectLibby={() => {
-            setUserMenuOpen(false);
-            setLibbyConnectOpen(true);
-            if (!libbyStatus) {
-              void getLibbyStatus().then(setLibbyStatus).catch((error) => handleError(error, "Unable to check Libby"));
-            }
           }}
           onLogout={() => void handleLogout()}
         />
@@ -1943,22 +1847,10 @@ export function App() {
           />
         ) : null}
 
-        {hasCurrentServerAccess && activeView === "libby" && !readerOpen ? (
-          <LibbyView
-            status={libbyStatus}
-            books={libbyBooks}
-            loading={libbyLoading}
-            playingBookId={listening && listeningPlaying ? listening.bookId : null}
-            onStart={handleStartLibbyLoan}
-            onRefresh={() => void refreshLibby(true).catch((error) => handleError(error, "Unable to load Libby loans"))}
-            onConnect={() => setLibbyConnectOpen(true)}
-          />
-        ) : null}
-
-        {hasCurrentServerAccess && (activeLibraryType || isLibbyReading) ? (
+        {hasCurrentServerAccess && activeLibraryType ? (
           <LibraryView
             key={`${activeView}-${activeLibraryId || "all"}`}
-            libraryType={activeLibraryType ? activeView as LibraryViewType : "ebooks"}
+            libraryType={activeView as LibraryViewType}
             books={libraryScopedBooks}
             activeBook={activeBook}
             activeBookId={activeBookId}
@@ -2052,9 +1944,7 @@ export function App() {
               onAddNote={handleAddListeningNote}
               onToggleReadList={() => void handleToggleReadList(listening.bookId)}
               onSetReadState={(read) => void handleSetBookReadState(listening.bookId, read)}
-              onOpenDetails={() =>
-                listening.bookId.startsWith("libby-") ? handleViewSelect("libby") : openBookDetails(listening.bookId)
-              }
+              onOpenDetails={() => openBookDetails(listening.bookId)}
               onClose={handleStopListening}
               onUsage={(mediaType, seconds) => void handleProfileUsage(mediaType, seconds)}
               controlsRef={listeningControlsRef}
@@ -2068,31 +1958,6 @@ export function App() {
           preferences={preferences}
           onPreferencesChange={updatePreferences}
           onClose={() => setSettingsOpen(false)}
-        />
-      ) : null}
-
-      {libbyConnectOpen ? (
-        <LibbyConnectPanel
-          status={libbyStatus}
-          onClose={() => setLibbyConnectOpen(false)}
-          onViewLoans={() => {
-            setLibbyConnectOpen(false);
-            handleViewSelect("libby");
-          }}
-          onLink={async (code) => {
-            await linkLibby(code);
-            await handleLibbyLinked();
-          }}
-          onLinked={handleLibbyLinked}
-          onUnlink={async () => {
-            if (listening?.bookId.startsWith("libby-")) {
-              handleStopListening();
-            }
-            await unlinkLibby();
-            setLibbyBooks([]);
-            setLibbyStatus({ linked: false, linkedAt: null, libraries: [] });
-            if (activeView === "libby") handleViewSelect("home");
-          }}
         />
       ) : null}
 
@@ -2707,7 +2572,6 @@ function AccountMenu({
   onManageUsers,
   onManageServer,
   onManageAccess,
-  onConnectLibby,
   onLogout
 }: {
   user: User | null;
@@ -2722,7 +2586,6 @@ function AccountMenu({
   onManageUsers: () => void;
   onManageServer: () => void;
   onManageAccess: () => void;
-  onConnectLibby: () => void;
   onLogout: () => void;
 }) {
   const displayName = user?.displayName || user?.username || "Account";
@@ -2772,10 +2635,6 @@ function AccountMenu({
               <span>Server settings</span>
             </button>
           ) : null}
-          <button type="button" onClick={onConnectLibby}>
-            <Library size={16} />
-            <span>Connect Libby</span>
-          </button>
           {canManageUsers ? (
             <button type="button" onClick={onManageUsers}>
               <Users size={16} />
@@ -4555,286 +4414,6 @@ function AddBookView({
   );
 }
 
-// Libby's apps now copy an account onto a new device by having you type the new device's code
-// into Libby. Older Libby versions showed the code instead, so typing one in still works.
-function LibbyLinkCard({
-  onLink,
-  onLinked
-}: {
-  onLink: (code: string) => Promise<void>;
-  onLinked: () => Promise<void>;
-}) {
-  const [shown, setShown] = useState<{ code: string; expiresAt: string } | null>(null);
-  const [secondsLeft, setSecondsLeft] = useState(0);
-  const [typedCode, setTypedCode] = useState("");
-  const [typing, setTyping] = useState(false);
-  const [working, setWorking] = useState(false);
-  const [error, setError] = useState("");
-
-  const requestCode = async () => {
-    setWorking(true);
-    setError("");
-    try {
-      const result = await startLibbyLink();
-      if (result.state === "waiting") setShown({ code: result.code, expiresAt: result.expiresAt });
-    } catch (startError) {
-      setError(startError instanceof Error ? startError.message : "Couldn't get a code from Libby");
-    } finally {
-      setWorking(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!shown) return;
-    let stopped = false;
-    const tick = () => setSecondsLeft(Math.max(0, Math.round((Date.parse(shown.expiresAt) - Date.now()) / 1000)));
-    tick();
-    const clock = window.setInterval(tick, 1000);
-    const poll = window.setInterval(async () => {
-      try {
-        const result = await checkLibbyLink();
-        if (stopped) return;
-        if (result.state === "linked") {
-          stopped = true;
-          setShown(null);
-          await onLinked();
-        } else if (result.state !== "waiting") {
-          setShown(null);
-          setError("That code ran out. Get a new one and try again.");
-        }
-      } catch (checkError) {
-        if (!stopped) setError(checkError instanceof Error ? checkError.message : "Couldn't check with Libby");
-      }
-    }, 3000);
-    return () => {
-      stopped = true;
-      window.clearInterval(clock);
-      window.clearInterval(poll);
-    };
-  }, [onLinked, shown]);
-
-  return (
-    <div className="libby-link-card">
-      {shown ? (
-        <>
-          <p>
-            In Libby, open the menu and choose <strong>Copy To Another Device</strong>, then type this code:
-          </p>
-          <strong className="libby-link-code" aria-live="polite">
-            {shown.code.slice(0, 4)} {shown.code.slice(4)}
-          </strong>
-          <span className="libby-link-wait">
-            <Loader2 className="spin" size={15} /> Waiting for Libby{secondsLeft ? ` · ${secondsLeft}s left` : ""}
-          </span>
-        </>
-      ) : (
-        <>
-          <p>shelf will show a code. You type it into the Libby app to copy your Libby account here.</p>
-          <button type="button" className="primary-button" disabled={working} onClick={() => void requestCode()}>
-            {working ? <Loader2 className="spin" size={16} /> : null}
-            Get a code
-          </button>
-        </>
-      )}
-      {error ? <span className="libby-error">{error}</span> : null}
-      {typing ? (
-        <form
-          className="libby-type-code"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            setWorking(true);
-            setError("");
-            try {
-              await onLink(typedCode);
-              setTypedCode("");
-            } catch (linkError) {
-              setError(linkError instanceof Error ? linkError.message : "Couldn't link Libby");
-            } finally {
-              setWorking(false);
-            }
-          }}
-        >
-          <input
-            value={typedCode}
-            onChange={(event) => setTypedCode(event.target.value.replace(/[^\d]/g, "").slice(0, 8))}
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            placeholder="Code from Libby"
-            aria-label="Code shown by Libby"
-          />
-          <button type="submit" className="primary-button" disabled={working || typedCode.length !== 8}>Link</button>
-        </form>
-      ) : (
-        <button type="button" className="text-button libby-type-toggle" onClick={() => setTyping(true)}>
-          Is Libby showing you a code instead?
-        </button>
-      )}
-      <small>
-        Audiobooks play in shelf and DRM-free books open in shelf's reader. Books with DRM or sent to Kindle still
-        open in Libby. Libby doesn't offer this officially, so it may stop working if Libby changes.
-      </small>
-    </div>
-  );
-}
-
-function LibbyConnectPanel({
-  status,
-  onClose,
-  onViewLoans,
-  onLink,
-  onLinked,
-  onUnlink
-}: {
-  status: LibbyStatus | null;
-  onClose: () => void;
-  onViewLoans: () => void;
-  onLink: (code: string) => Promise<void>;
-  onLinked: () => Promise<void>;
-  onUnlink: () => Promise<void>;
-}) {
-  const [working, setWorking] = useState(false);
-
-  return (
-    <div className="modal-backdrop">
-      <section className="modal-panel libby-connect-panel" aria-labelledby="libby-connect-title">
-        <div className="modal-heading">
-          <div>
-            <h2 id="libby-connect-title">Connect Libby</h2>
-            <p>Listen to and read your Libby loans in shelf.</p>
-          </div>
-          <button type="button" className="icon-button" title="Close" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-        {!status ? (
-          <div className="library-empty"><Loader2 className="spin" size={26} /></div>
-        ) : status.linked ? (
-          <div className="libby-connected">
-            <p>
-              Connected{status.libraries.length ? ` to ${status.libraries.join(", ")}` : ""}.
-            </p>
-            <button type="button" className="primary-button" onClick={onViewLoans}>View Libby loans</button>
-            <button
-              type="button"
-              className="text-button"
-              disabled={working}
-              onClick={async () => {
-                setWorking(true);
-                try {
-                  await onUnlink();
-                } finally {
-                  setWorking(false);
-                }
-              }}
-            >
-              Disconnect Libby
-            </button>
-          </div>
-        ) : (
-          <LibbyLinkCard onLink={onLink} onLinked={onLinked} />
-        )}
-      </section>
-    </div>
-  );
-}
-
-function LibbyView({
-  status,
-  books,
-  loading,
-  playingBookId,
-  onStart,
-  onRefresh,
-  onConnect
-}: {
-  status: LibbyStatus | null;
-  books: Book[];
-  loading: boolean;
-  playingBookId: string | null;
-  onStart: (book: Book) => void;
-  onRefresh: () => void;
-  onConnect: () => void;
-}) {
-
-  if (!status) {
-    return (
-      <section className="libby-view">
-        <div className="library-empty"><Loader2 className="spin" size={26} /></div>
-      </section>
-    );
-  }
-
-  if (!status.linked) {
-    return (
-      <section className="libby-view">
-        <div className="library-empty">
-          <Library size={30} />
-          <strong>Libby isn't connected</strong>
-          <button type="button" className="primary-button" onClick={onConnect}>Connect Libby</button>
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="libby-view">
-      <div className="libby-header">
-        <span>{status.libraries.length ? status.libraries.join(" · ") : "Libby"}</span>
-        <div className="libby-header-actions">
-          <button type="button" className="text-button" onClick={onRefresh} disabled={loading}>
-            <RefreshCw size={15} className={loading ? "spin" : ""} /> Refresh
-          </button>
-          <button type="button" className="text-button" onClick={onConnect}>
-            Manage
-          </button>
-        </div>
-      </div>
-      <div className="library-shelf library-shelf-grid libby-shelf">
-        {books.map((book) => {
-          const mode = book.libby?.mode || "libby";
-          const percent = book.progress?.percent || 0;
-          const action = mode === "audio"
-            ? (playingBookId === book.id ? "Playing" : "Listen")
-            : mode === "libby"
-              ? "Open in Libby"
-              : "Read";
-          return (
-            <article className="library-book-card is-grid libby-loan-card" key={book.id}>
-              <button type="button" className="book-cover-button" aria-label={`${action}: ${book.title}`} onClick={() => onStart(book)}>
-                <BookCover book={book} />
-              </button>
-              <div className="library-book-copy">
-                <strong>{book.title}</strong>
-                <span className="libby-loan-author">{book.author || "Unknown author"}</span>
-                <span className="library-book-meta">
-                  {book.libby?.dueAt ? `Due ${formatShortDate(book.libby.dueAt)}` : book.libby?.libraryName}
-                </span>
-                {percent > 0 ? (
-                  <span className="book-progress-bar" aria-hidden="true">
-                    <span style={{ width: `${Math.round(percent * 100)}%` }} />
-                  </span>
-                ) : null}
-              </div>
-              <button type="button" className="secondary-button libby-loan-action" onClick={() => onStart(book)}>
-                {mode === "audio" ? <Headphones size={15} /> : mode === "libby" ? <ExternalLink size={15} /> : <BookOpen size={15} />}
-                {action}
-              </button>
-              {mode === "libby" ? <small className="libby-loan-note">Protected by DRM, so it opens in Libby</small> : null}
-            </article>
-          );
-        })}
-        {books.length === 0 && !loading ? (
-          <div className="library-empty">
-            <Library size={30} />
-            <strong>No Libby loans right now</strong>
-            <span>Borrow something in Libby, then refresh.</span>
-          </div>
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
 function LibraryView({
   libraryType,
   books,
@@ -5384,7 +4963,7 @@ export function BookCover({ book, fit = "cover" }: { book: Book; fit?: "cover" |
       ) : (
         <span className={`generated-cover cover-v${coverVariant(book)}`}>
           <span className="generated-cover-kicker">
-            {book.mediaType === "audiobook" ? <><Headphones size={15} /> AUDIOBOOK</> : book.ext.replace(".", "").toUpperCase() || "EBOOK"}
+            {book.mediaType === "audiobook" ? <><Headphones size={15} /> AUDIOBOOK</> : book.ext.replace(".", "").toUpperCase()}
           </span>
           <span className="generated-cover-title">{book.title}</span>
           <span className="generated-cover-author">{book.author || "Unknown author"}</span>
@@ -9012,9 +8591,6 @@ function viewTitle(view: MainView) {
   }
   if (view === "add") {
     return "Add Title";
-  }
-  if (view === "libby") {
-    return "Libby loans";
   }
   return "Home";
 }
