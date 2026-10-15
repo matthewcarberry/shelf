@@ -117,6 +117,8 @@ import {
   savePreferences,
   savePlatformPreferences,
   scanLibrary,
+  getLibraryScanSettings,
+  updateLibraryScanSettings,
   saveProgress,
   sendBookToKindle,
   searchBookArtwork,
@@ -131,6 +133,7 @@ import {
   updateReadingActivity,
   updateUserPassword
 } from "./api";
+import type { LibraryScanSettings, LibraryScanState } from "./api";
 import type {
   Alignment,
   ArtworkCandidate,
@@ -3772,6 +3775,72 @@ function UserManagementPanel({
   );
 }
 
+const SCAN_INTERVAL_OPTIONS = [
+  { minutes: 15, label: "every 15 minutes" },
+  { minutes: 30, label: "every 30 minutes" },
+  { minutes: 60, label: "hourly" },
+  { minutes: 120, label: "every 2 hours" },
+  { minutes: 360, label: "every 6 hours" },
+  { minutes: 720, label: "every 12 hours" },
+  { minutes: 1440, label: "daily" }
+];
+
+function LibraryScanSettingsSection({ onError }: { onError: (error: unknown, fallback: string) => void }) {
+  const [state, setState] = useState<LibraryScanState | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    getLibraryScanSettings()
+      .then(setState)
+      .catch((error) => onError(error, "Unable to load library scan settings"));
+  }, [onError]);
+
+  const save = async (patch: Partial<LibraryScanSettings>) => {
+    setSaving(true);
+    try {
+      setState(await updateLibraryScanSettings(patch));
+    } catch (error) {
+      onError(error, "Unable to save library scan settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const settings = state?.settings;
+  return (
+    <section className="server-settings-section library-scan-settings">
+      <div className="server-settings-heading">
+        <div><h3>Library scanning</h3><p>Choose when Shelf looks for new and changed files in the library folder.</p></div>
+      </div>
+      {settings ? (
+        <div className="library-scan-options">
+          <label>
+            <input type="checkbox" checked={settings.autoScan} disabled={saving} onChange={(event) => void save({ autoScan: event.target.checked })} />
+            <span><strong>Scan my library automatically</strong><small>Your library will be updated automatically when changes to library folders are detected.</small></span>
+          </label>
+          <label>
+            <input type="checkbox" checked={settings.partialScan} disabled={saving || !settings.autoScan} onChange={(event) => void save({ partialScan: event.target.checked })} />
+            <span><strong>Run a partial scan when changes are detected</strong><small>When changes to library folders are detected, only scan the folder that changed.</small></span>
+          </label>
+          <label>
+            <input type="checkbox" checked={settings.periodicScan} disabled={saving} onChange={(event) => void save({ periodicScan: event.target.checked })} />
+            <span><strong>Scan my library periodically</strong><small>Runs a full scan on a schedule, which also catches changes the folder watcher misses.</small></span>
+          </label>
+          <label className="library-scan-interval">
+            <span>Library scan interval</span>
+            <select value={settings.scanIntervalMinutes} disabled={saving || !settings.periodicScan} onChange={(event) => void save({ scanIntervalMinutes: Number(event.target.value) })}>
+              {SCAN_INTERVAL_OPTIONS.map((option) => <option key={option.minutes} value={option.minutes}>{option.label}</option>)}
+            </select>
+          </label>
+          {settings.autoScan && state.watcher.error ? (
+            <small className="library-scan-warning">Shelf couldn't watch the library folder: {state.watcher.error}. Turn on periodic scanning instead.</small>
+          ) : null}
+        </div>
+      ) : <small>Loading…</small>}
+    </section>
+  );
+}
+
 function ServerSettingsPanel({
   server,
   currentAccountId,
@@ -3939,6 +4008,8 @@ function ServerSettingsPanel({
             <button type="submit" className="secondary-button" disabled={loading || !libraryForm.name.trim()}><FolderPlus size={16} />Add library</button>
           </form>
         </section>
+
+        <LibraryScanSettingsSection onError={onError} />
 
         <section className="server-settings-section">
           <div className="server-settings-heading">

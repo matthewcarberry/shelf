@@ -22,6 +22,7 @@ import {
   scanLibrary,
   streamFile
 } from "./library.js";
+import { createLibraryWatcher, readScanSettings, writeScanSettings } from "./library-watcher.js";
 import { lookupDefinition } from "./dictionary.js";
 import { createAuth, hashPassword, requireAdmin, verifyPassword } from "./auth.js";
 import { notifyRegistrationAttempt, registrationNotificationsConfigured } from "./notifications.js";
@@ -1015,6 +1016,20 @@ app.post("/api/library/scan", requireAdmin, async (req, res, next) => {
   }
 });
 
+app.get("/api/library/scan-settings", requireAdmin, (_req, res) => {
+  res.json(scanSettingsResponse());
+});
+
+app.patch("/api/library/scan-settings", requireAdmin, async (req, res, next) => {
+  try {
+    scanSettings = await writeScanSettings(store, req.body || {});
+    applyScanSettings();
+    res.json(scanSettingsResponse());
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/books/upload", requireAdmin, upload.array("books", 50), async (req, res, next) => {
   try {
     const invalid = (req.files || []).filter((file) => {
@@ -1603,20 +1618,61 @@ const httpServer = app.listen(port, "0.0.0.0", () => {
   void runInitialLibraryScan();
 });
 
-// One scan at a time: a second request while a scan is running waits for that
-// scan instead of walking the library again.
-let activeLibraryScan = null;
-function runLibraryScan() {
-  if (!activeLibraryScan) {
-    activeLibraryScan = (async () => {
-      const books = await scanLibrary(store, paths);
-      await platform.reconcileBooks(books);
-      return books;
-    })().finally(() => {
-      activeLibraryScan = null;
+// Scans run one at a time. A full-scan request while a full scan is queued or
+// running joins it; partial scans queue behind whatever is running.
+let libraryScanQueue = Promise.resolve();
+let pendingFullScan = null;
+function runLibraryScan(onlyDirs = null) {
+  if (!onlyDirs && pendingFullScan) return pendingFullScan;
+  const task = libraryScanQueue.then(async () => {
+    const books = await scanLibrary(store, paths, onlyDirs ? { onlyDirs } : {});
+    await platform.reconcileBooks(books);
+    return books;
+  });
+  libraryScanQueue = task.catch(() => {});
+  if (!onlyDirs) {
+    pendingFullScan = task;
+    libraryScanQueue.then(() => {
+      if (pendingFullScan === task) pendingFullScan = null;
     });
   }
-  return activeLibraryScan;
+  return task;
+}
+
+let scanSettings = null;
+let periodicScanTimer = null;
+const libraryWatcher = createLibraryWatcher({
+  libraryDir: paths.libraryDir,
+  onChange: (folders) => {
+    const onlyDirs = scanSettings.partialScan ? folders : null;
+    const label = onlyDirs ? onlyDirs.join(", ") : "whole library";
+    runLibraryScan(onlyDirs)
+      .then((books) => console.log(`Library change scan complete (${label}): ${books.length} titles`))
+      .catch((error) => console.error(`Library change scan failed (${label})`, error));
+  }
+});
+
+function applyScanSettings() {
+  if (scanSettings.autoScan) {
+    libraryWatcher.start();
+  } else {
+    libraryWatcher.stop();
+  }
+  if (periodicScanTimer) clearInterval(periodicScanTimer);
+  periodicScanTimer = null;
+  if (scanSettings.periodicScan) {
+    periodicScanTimer = setInterval(() => {
+      runLibraryScan()
+        .then((books) => console.log(`Periodic library scan complete: ${books.length} titles`))
+        .catch((error) => console.error("Periodic library scan failed", error));
+    }, scanSettings.scanIntervalMinutes * 60_000);
+    periodicScanTimer.unref();
+  }
+}
+
+function scanSettingsResponse() {
+  scanSettings ||= readScanSettings(store);
+  return { settings: scanSettings, watcher: libraryWatcher.status() };
 }
 
 async function runInitialLibraryScan() {
@@ -1629,10 +1685,17 @@ async function runInitialLibraryScan() {
     initialLibraryScanStatus = "error";
     console.error("Initial library scan failed", error);
   }
+  try {
+    scanSettings = readScanSettings(store);
+    applyScanSettings();
+  } catch (error) {
+    console.error("Unable to start automatic library scanning", error);
+  }
 }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, () => {
+    libraryWatcher.stop();
     const forcedExit = setTimeout(() => process.exit(1), 10_000);
     forcedExit.unref();
     httpServer.close(() => {

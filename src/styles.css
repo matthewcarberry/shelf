@@ -5950,3 +5950,38 @@ button.book-details-mark:focus-visible {
     opacity: 1;
   }
 }
+
+.library-scan-options {
+  display: grid;
+  gap: 14px;
+}
+
+.library-scan-options > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.library-scan-options > label input[type="checkbox"] {
+  margin-top: 3px;
+}
+
+.library-scan-options > label > span {
+  display: grid;
+  gap: 2px;
+}
+
+.library-scan-options small {
+  color: var(--muted);
+}
+
+.library-scan-options > label.library-scan-interval {
+  grid-template-columns: auto minmax(0, 220px);
+  justify-content: start;
+  align-items: center;
+}
+
+.library-scan-options .library-scan-warning {
+  color: var(--danger, #b42318);
+}

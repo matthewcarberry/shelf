@@ -201,6 +201,29 @@ export async function scanLibrary(): Promise<Book[]> {
   return data.books;
 }
 
+export type LibraryScanSettings = {
+  autoScan: boolean;
+  partialScan: boolean;
+  periodicScan: boolean;
+  scanIntervalMinutes: number;
+};
+
+export type LibraryScanState = {
+  settings: LibraryScanSettings;
+  watcher: { watching: boolean; error: string | null };
+};
+
+export async function getLibraryScanSettings(): Promise<LibraryScanState> {
+  return request("/api/library/scan-settings");
+}
+
+export async function updateLibraryScanSettings(patch: Partial<LibraryScanSettings>): Promise<LibraryScanState> {
+  return request("/api/library/scan-settings", {
+    method: "PATCH",
+    body: JSON.stringify(patch)
+  });
+}
+
 export async function uploadBooks(files: File[]): Promise<{ books: Book[]; rejected: string[]; duplicates: string[] }> {
   const form = new FormData();
   for (const file of files) {

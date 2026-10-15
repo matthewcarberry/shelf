@@ -89,7 +89,16 @@ export async function scanLibrary(store, paths, options = {}) {
     (options.audioBatchPaths || []).map((value) => normalizePath(value).toLowerCase())
   );
 
-  for await (const filePath of walk(paths.libraryDir)) {
+  // A partial scan only walks the given library-relative folders.
+  const onlyDirs = Array.isArray(options.onlyDirs) && options.onlyDirs.length > 0
+    ? options.onlyDirs.map((dir) => path.resolve(paths.libraryDir, dir))
+      .filter((dir) => isInside(paths.libraryDir, dir))
+    : null;
+  const roots = onlyDirs || [paths.libraryDir];
+  const walked = new Set();
+
+  for (const root of roots) for await (const filePath of walk(root)) {
+    walked.add(normalizePath(path.relative(paths.libraryDir, filePath)).toLowerCase());
     const ext = path.extname(filePath).toLowerCase();
     if (!ALL_BOOK_EXTENSIONS.has(ext)) {
       continue;
@@ -147,7 +156,33 @@ export async function scanLibrary(store, paths, options = {}) {
     }
   }
 
+  if (onlyDirs) {
+    // An audiobook can span folders (CD1/CD2) or share an album tag, so bring
+    // in the already-known tracks of every audiobook the scanned files belong
+    // to. Otherwise a partial scan would rebuild those books with only the
+    // tracks inside the scanned folder.
+    const bookIds = new Set(audioItems.map((item) => item.existingBookId).filter(Boolean));
+    const albumKeys = new Set(audioItems.filter((item) => item.album).map(albumKey));
+    for (const [relKey, cached] of cachedAudio) {
+      if (walked.has(relKey)) continue;
+      const related = bookIds.has(cached.existingBookId) ||
+        (cached.album && albumKeys.has(albumKey(cached)));
+      if (!related) continue;
+      const book = store.getBook(cached.existingBookId);
+      const track = (book?.audioFiles || []).find((item) =>
+        normalizePath(item.relPath || path.relative(paths.libraryDir, item.path || "")).toLowerCase() === relKey);
+      const filePath = track?.path || path.join(paths.libraryDir, track?.relPath || relKey);
+      const stat = await fs.stat(filePath).catch(() => null);
+      if (!stat?.isFile()) continue;
+      const relPath = normalizePath(path.relative(paths.libraryDir, filePath));
+      audioItems.push({ ...cachedAudioItem({ filePath, relPath, stat, cached }), uploadBatchKey: null });
+    }
+  }
+
   for (const group of groupAudioFiles(audioItems)) {
+    if (onlyDirs && !group.tracks.some((track) => walked.has(track.relPath.toLowerCase()))) {
+      continue;
+    }
     const book = await buildAudiobookRecord(group, paths, store);
     await store.upsertBook(book);
   }
@@ -817,6 +852,15 @@ async function* walk(dir) {
       yield entryPath;
     }
   }
+}
+
+function albumKey(item) {
+  return `${String(item.artist || "").toLowerCase()}:${String(item.album || "").toLowerCase()}`;
+}
+
+function isInside(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function normalizePath(value) {
