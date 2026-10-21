@@ -29,7 +29,7 @@ import { notifyRegistrationAttempt, registrationNotificationsConfigured } from "
 import { kindleDeliverySettings, sendBookToKindle } from "./kindle.js";
 import { ActivityTracker } from "./activity.js";
 import { PlatformService } from "./platform.js";
-import { downloadOpenLibraryCover, searchOpenLibraryArtwork } from "./artwork.js";
+import { detectImageType, downloadArtworkFromUrl, downloadOpenLibraryCover, searchOpenLibraryArtwork } from "./artwork.js";
 import { createCastLinks } from "./cast.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -86,11 +86,6 @@ const upload = multer({
     }
   })
 });
-const coverMimeExtensions = new Map([
-  ["image/jpeg", ".jpg"],
-  ["image/png", ".png"],
-  ["image/webp", ".webp"]
-]);
 const coverUpload = multer({
   storage: multer.memoryStorage(),
   limits: { files: 1, fileSize: 10 * 1024 * 1024 }
@@ -1072,17 +1067,18 @@ app.put("/api/books/:bookId/cover", requireAdmin, coverUpload.single("cover"), a
       return;
     }
 
-    const extension = coverMimeExtensions.get(req.file.mimetype);
-    if (!extension) {
+    // Trust the file's bytes, not the browser's guess, so the saved extension and type match.
+    const detected = detectImageType(req.file.buffer);
+    if (!detected) {
       res.status(415).json({ error: "Cover art must be a JPEG, PNG, or WebP image" });
       return;
     }
 
-    const coverPath = path.join(paths.coverDir, `${book.id}-manual-cover${extension}`);
+    const coverPath = path.join(paths.coverDir, `${book.id}-manual-cover${detected.extension}`);
     await fs.writeFile(coverPath, req.file.buffer);
     const updated = await store.patchBook(book.id, {
       coverPath,
-      coverMime: req.file.mimetype
+      coverMime: detected.mime
     });
 
     if (book.coverPath && path.resolve(book.coverPath) !== path.resolve(coverPath) && isPathInside(book.coverPath, paths.coverDir)) {
@@ -1120,7 +1116,9 @@ app.post("/api/books/:bookId/artwork", requireAdmin, async (req, res, next) => {
       return;
     }
 
-    const artwork = await downloadOpenLibraryCover(req.body?.coverId);
+    const artwork = req.body?.imageUrl
+      ? await downloadArtworkFromUrl(req.body.imageUrl)
+      : await downloadOpenLibraryCover(req.body?.coverId);
     const coverPath = path.join(paths.coverDir, `${book.id}-manual-cover${artwork.extension}`);
     await fs.writeFile(coverPath, artwork.buffer);
     const updated = await store.patchBook(book.id, {

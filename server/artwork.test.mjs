@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { downloadOpenLibraryCover, searchOpenLibraryArtwork } from "./artwork.js";
+import { downloadArtworkFromUrl, downloadOpenLibraryCover, searchOpenLibraryArtwork } from "./artwork.js";
 
 test("finds and deduplicates Open Library covers across matching editions", async () => {
   const requested = [];
@@ -70,4 +70,39 @@ test("rejects invalid artwork selections and non-image responses", async () => {
     downloadOpenLibraryCover(123, async () => new Response("not an image", { status: 200 })),
     /unsupported artwork file/
   );
+});
+
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+const publicLookup = async () => [{ address: "93.184.216.34", family: 4 }];
+
+test("downloads pasted artwork URLs and follows redirects", async () => {
+  const requested = [];
+  const fetchImpl = async (url) => {
+    requested.push(String(url));
+    if (String(url).endsWith("/cover")) {
+      return new Response(null, { status: 302, headers: { location: "/images/cover.png" } });
+    }
+    return new Response(PNG_BYTES, { headers: { "content-type": "application/octet-stream" } });
+  };
+
+  const artwork = await downloadArtworkFromUrl("https://example.com/cover", { fetchImpl, lookupImpl: publicLookup });
+  assert.equal(artwork.mime, "image/png");
+  assert.equal(artwork.extension, ".png");
+  assert.deepEqual(requested, ["https://example.com/cover", "https://example.com/images/cover.png"]);
+});
+
+test("rejects pasted artwork URLs that aren't public web images", async () => {
+  const fetchImpl = async () => new Response("<html></html>", { headers: { "content-type": "text/html" } });
+  await assert.rejects(downloadArtworkFromUrl("ftp://example.com/a.png", { fetchImpl, lookupImpl: publicLookup }), { status: 400 });
+  await assert.rejects(downloadArtworkFromUrl("not a url", { fetchImpl, lookupImpl: publicLookup }), { status: 400 });
+  await assert.rejects(downloadArtworkFromUrl("http://192.168.0.83:9191/a.png", { fetchImpl }), { status: 400 });
+  await assert.rejects(downloadArtworkFromUrl("http://[::1]/a.png", { fetchImpl }), { status: 400 });
+  await assert.rejects(
+    downloadArtworkFromUrl("https://nas.local/a.png", { fetchImpl, lookupImpl: async () => [{ address: "10.0.0.5", family: 4 }] }),
+    { status: 400 }
+  );
+  await assert.rejects(downloadArtworkFromUrl("https://example.com/page", { fetchImpl, lookupImpl: publicLookup }), { status: 415 });
+
+  const redirectToLan = async () => new Response(null, { status: 301, headers: { location: "http://127.0.0.1/secret.png" } });
+  await assert.rejects(downloadArtworkFromUrl("https://example.com/a.png", { fetchImpl: redirectToLan, lookupImpl: publicLookup }), { status: 400 });
 });

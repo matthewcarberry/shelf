@@ -316,6 +316,14 @@ export async function applyBookArtwork(bookId: string, coverId: number): Promise
   return data.book;
 }
 
+export async function applyBookArtworkUrl(bookId: string, imageUrl: string): Promise<Book> {
+  const data = await request<{ book: Book }>(`/api/books/${bookId}/artwork`, {
+    method: "POST",
+    body: JSON.stringify({ imageUrl })
+  });
+  return data.book;
+}
+
 export async function deleteBook(bookId: string): Promise<void> {
   await request(`/api/books/${bookId}`, {
     method: "DELETE"

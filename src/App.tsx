@@ -36,6 +36,7 @@ import {
   ListPlus,
   Maximize,
   Minimize,
+  Link2,
   LockKeyhole,
   Loader2,
   LogOut,
@@ -59,6 +60,7 @@ import {
   Star,
   Sun,
   Trash2,
+  Upload,
   Type,
   UserPlus,
   Users,
@@ -74,6 +76,7 @@ import {
   addHighlight,
   addToReadList,
   applyBookArtwork,
+  applyBookArtworkUrl,
   acceptServerInvitation,
   claimServer,
   clearReadingActivity,
@@ -3242,6 +3245,14 @@ function BookMetadataDialog({
   );
 }
 
+type ArtworkSelection =
+  | { kind: "openlibrary"; coverId: number }
+  | { kind: "file" }
+  | { kind: "url" };
+
+const ARTWORK_FILE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_ARTWORK_BYTES = 10 * 1024 * 1024;
+
 function ArtworkDialog({
   book,
   onClose,
@@ -3254,10 +3265,19 @@ function ArtworkDialog({
   const [title, setTitle] = useState(book.title);
   const [author, setAuthor] = useState(book.author || "");
   const [candidates, setCandidates] = useState<ArtworkCandidate[]>([]);
-  const [selectedCoverId, setSelectedCoverId] = useState<number | null>(null);
+  const [selection, setSelection] = useState<ArtworkSelection | null>(null);
+  const [customFile, setCustomFile] = useState<{ file: File; previewUrl: string } | null>(null);
+  const [urlDraft, setUrlDraft] = useState("");
+  const [customUrl, setCustomUrl] = useState("");
+  const [customUrlBroken, setCustomUrlBroken] = useState(false);
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
   const [message, setMessage] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => () => {
+    if (customFile) URL.revokeObjectURL(customFile.previewUrl);
+  }, [customFile]);
 
   const runSearch = useCallback(async (nextTitle: string, nextAuthor: string) => {
     if (!nextTitle.trim()) {
@@ -3266,11 +3286,11 @@ function ArtworkDialog({
     }
     setLoading(true);
     setMessage("");
-    setSelectedCoverId(null);
+    setSelection((current) => (current?.kind === "openlibrary" ? null : current));
     try {
       const next = await searchBookArtwork(book.id, nextTitle.trim(), nextAuthor.trim());
       setCandidates(next);
-      if (!next.length) setMessage("No matching artwork was found. Try adjusting the title or author.");
+      if (!next.length) setMessage("No matching artwork was found. Try adjusting the title or author, or add your own below.");
     } catch (error) {
       setCandidates([]);
       setMessage(error instanceof Error ? error.message : "Unable to search for artwork.");
@@ -3283,17 +3303,74 @@ function ArtworkDialog({
     void runSearch(book.title, book.author || "");
   }, [book.author, book.title, runSearch]);
 
+  const chooseFile = useCallback((file: File | null | undefined) => {
+    if (!file) return;
+    if (!ARTWORK_FILE_TYPES.includes(file.type)) {
+      setMessage("Artwork must be a JPEG, PNG, or WebP image.");
+      return;
+    }
+    if (file.size > MAX_ARTWORK_BYTES) {
+      setMessage("Artwork exceeds the 10 MB size limit.");
+      return;
+    }
+    setMessage("");
+    setCustomFile({ file, previewUrl: URL.createObjectURL(file) });
+    setSelection({ kind: "file" });
+  }, []);
+
+  // Pasting an image (for example one copied from a web page) adds it as your own artwork.
+  useEffect(() => {
+    const handlePaste = (event: ClipboardEvent) => {
+      const file = [...(event.clipboardData?.files || [])].find((item) => item.type.startsWith("image/"));
+      if (!file) return;
+      event.preventDefault();
+      chooseFile(file);
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [chooseFile]);
+
+  const chooseUrl = () => {
+    const value = urlDraft.trim();
+    if (!/^https?:\/\/\S+$/i.test(value)) {
+      setMessage("Enter an image URL starting with http:// or https://.");
+      return;
+    }
+    setMessage("");
+    setCustomUrl(value);
+    setCustomUrlBroken(false);
+    setSelection({ kind: "url" });
+  };
+
   const handleApply = async () => {
-    if (!selectedCoverId) return;
+    if (!selection) return;
     setApplying(true);
     setMessage("");
     try {
-      onSaved(await applyBookArtwork(book.id, selectedCoverId));
+      if (selection.kind === "openlibrary") onSaved(await applyBookArtwork(book.id, selection.coverId));
+      else if (selection.kind === "file" && customFile) onSaved(await updateBookCover(book.id, customFile.file));
+      else if (selection.kind === "url" && customUrl) onSaved(await applyBookArtworkUrl(book.id, customUrl));
+      else setApplying(false);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to save artwork.");
       setApplying(false);
     }
   };
+
+  const customTiles = [
+    customFile ? {
+      kind: "file" as const,
+      src: customFile.previewUrl,
+      label: customFile.file.name,
+      detail: "From your device"
+    } : null,
+    customUrl ? {
+      kind: "url" as const,
+      src: customUrl,
+      label: customUrl.replace(/^https?:\/\//i, ""),
+      detail: customUrlBroken ? "Preview unavailable; shelf will still try" : "From a URL"
+    } : null
+  ].filter((tile) => tile !== null);
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`Get artwork for ${book.title}`}>
@@ -3304,7 +3381,7 @@ function ArtworkDialog({
               <ImagePlus size={23} />
               <h2>Get Artwork</h2>
             </div>
-            <p>Choose a cover from Open Library. Your current artwork will remain until you save a selection.</p>
+            <p>Choose a cover from Open Library or add your own. Your current artwork will remain until you save a selection.</p>
           </div>
           <button type="button" className="icon-button" title="Close" disabled={applying} onClick={onClose}>
             <X size={18} />
@@ -3332,24 +3409,84 @@ function ArtworkDialog({
           </button>
         </form>
 
+        <div className="artwork-custom-row">
+          <button type="button" className="secondary-button" disabled={applying} onClick={() => fileInputRef.current?.click()}>
+            <Upload size={17} />
+            Upload image
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ARTWORK_FILE_TYPES.join(",")}
+            hidden
+            onChange={(event) => {
+              chooseFile(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
+          <form
+            className="artwork-url-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              chooseUrl();
+            }}
+          >
+            <input
+              type="url"
+              inputMode="url"
+              placeholder="Or paste an image URL"
+              aria-label="Image URL"
+              value={urlDraft}
+              onChange={(event) => setUrlDraft(event.target.value)}
+            />
+            <button type="submit" className="secondary-button" disabled={applying || !urlDraft.trim()}>
+              <Link2 size={17} />
+              Use URL
+            </button>
+          </form>
+        </div>
+
         {message ? <div className="message-bar inline-message">{message}</div> : null}
 
-        {loading ? (
-          <div className="artwork-loading">
-            <Loader2 className="spin" size={22} />
-            Searching for covers…
-          </div>
-        ) : candidates.length ? (
+        {customTiles.length || candidates.length ? (
           <div className="artwork-grid" role="list" aria-label="Artwork results">
-            {candidates.map((candidate) => {
-              const selected = selectedCoverId === candidate.coverId;
+            {customTiles.map((tile) => {
+              const selected = selection?.kind === tile.kind;
+              return (
+                <article key={tile.kind} className={`artwork-result is-custom ${selected ? "is-selected" : ""}`} role="listitem">
+                  <button
+                    type="button"
+                    className="artwork-choice"
+                    aria-pressed={selected}
+                    onClick={() => setSelection({ kind: tile.kind })}
+                  >
+                    <span className="artwork-image-wrap">
+                      <img
+                        src={tile.src}
+                        alt="Your artwork"
+                        onError={tile.kind === "url" ? () => setCustomUrlBroken(true) : undefined}
+                        onLoad={tile.kind === "url" ? () => setCustomUrlBroken(false) : undefined}
+                      />
+                      {selected ? <span className="artwork-selected-badge"><Check size={16} /></span> : null}
+                    </span>
+                    <span className="artwork-result-copy">
+                      <strong>Your artwork</strong>
+                      <span>{tile.label}</span>
+                      <small>{tile.detail}</small>
+                    </span>
+                  </button>
+                </article>
+              );
+            })}
+            {loading ? null : candidates.map((candidate) => {
+              const selected = selection?.kind === "openlibrary" && selection.coverId === candidate.coverId;
               return (
                 <article key={candidate.id} className={`artwork-result ${selected ? "is-selected" : ""}`} role="listitem">
                   <button
                     type="button"
                     className="artwork-choice"
                     aria-pressed={selected}
-                    onClick={() => setSelectedCoverId(candidate.coverId)}
+                    onClick={() => setSelection({ kind: "openlibrary", coverId: candidate.coverId })}
                   >
                     <span className="artwork-image-wrap">
                       <img src={candidate.thumbnailUrl} alt={`Cover for ${candidate.title}`} loading="lazy" />
@@ -3370,11 +3507,18 @@ function ArtworkDialog({
           </div>
         ) : null}
 
+        {loading ? (
+          <div className="artwork-loading">
+            <Loader2 className="spin" size={22} />
+            Searching for covers…
+          </div>
+        ) : null}
+
         <div className="modal-actions artwork-actions">
           <button type="button" className="secondary-button" disabled={applying} onClick={onClose}>
             Cancel
           </button>
-          <button type="button" className="primary-button" disabled={!selectedCoverId || applying} onClick={() => void handleApply()}>
+          <button type="button" className="primary-button" disabled={!selection || applying} onClick={() => void handleApply()}>
             {applying ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
             {applying ? "Saving…" : "Use selected artwork"}
           </button>

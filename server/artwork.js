@@ -1,8 +1,12 @@
+import dns from "node:dns/promises";
+import net from "node:net";
+
 const OPEN_LIBRARY_ORIGIN = "https://openlibrary.org";
 const OPEN_LIBRARY_COVERS_ORIGIN = "https://covers.openlibrary.org";
 const USER_AGENT = "Shelf/0.1 (+https://shelf-stream.com)";
 const MAX_RESULTS = 24;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_REDIRECTS = 5;
 
 export async function searchOpenLibraryArtwork(input, fetchImpl = fetch) {
   const title = cleanSearchValue(input?.title, 240);
@@ -94,6 +98,99 @@ export async function downloadOpenLibraryCover(coverId, fetchImpl = fetch) {
   }
 
   return { ...detected, buffer, coverId: normalizedCoverId };
+}
+
+export async function downloadArtworkFromUrl(value, { fetchImpl = fetch, lookupImpl = dns.lookup } = {}) {
+  let url = parseArtworkUrl(value);
+  for (let redirects = 0; ; redirects += 1) {
+    await assertPublicHost(url.hostname, lookupImpl);
+    const response = await fetchImpl(url, {
+      headers: { Accept: "image/*", "User-Agent": USER_AGENT },
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000)
+    }).catch((cause) => {
+      throw httpError("That image URL could not be reached", 502, cause);
+    });
+
+    if (response.status >= 300 && response.status < 400 && response.headers.get("location")) {
+      if (redirects >= MAX_REDIRECTS) throw httpError("That image URL redirects too many times", 502);
+      url = parseArtworkUrl(new URL(response.headers.get("location"), url).toString());
+      continue;
+    }
+    if (!response.ok) {
+      throw httpError(`That image URL returned an error (HTTP ${response.status})`, 502);
+    }
+
+    const declaredLength = Number(response.headers.get("content-length") || 0);
+    if (declaredLength > MAX_IMAGE_BYTES) throw httpError("Artwork exceeds the 10 MB size limit", 413);
+    const buffer = await readLimited(response);
+    if (!buffer.length) throw httpError("That image URL returned an empty file", 502);
+
+    const detected = detectImageType(buffer);
+    if (!detected) throw httpError("That URL is not a JPEG, PNG, or WebP image", 415);
+    return { ...detected, buffer };
+  }
+}
+
+function parseArtworkUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value || "").trim());
+  } catch {
+    throw httpError("Enter a valid image URL", 400);
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw httpError("Image URLs must start with http:// or https://", 400);
+  }
+  if (url.username || url.password) throw httpError("Image URLs can't include a username or password", 400);
+  return url;
+}
+
+// The server fetches the URL itself, so keep it from being pointed at the LAN or the container.
+async function assertPublicHost(hostname, lookupImpl) {
+  const host = hostname.replace(/^\[|\]$/g, "");
+  let addresses;
+  try {
+    addresses = net.isIP(host) ? [{ address: host }] : await lookupImpl(host, { all: true, verbatim: true });
+  } catch {
+    throw httpError("That image URL's server could not be found", 400);
+  }
+  if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) {
+    throw httpError("Image URLs must point to a public website", 400);
+  }
+}
+
+function isPrivateAddress(address) {
+  const mapped = address.toLowerCase().match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  const value = mapped ? mapped[1] : address.toLowerCase();
+  if (net.isIPv4(value)) {
+    const [a, b] = value.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168)
+      || (a === 198 && (b === 18 || b === 19));
+  }
+  return value === "::" || value === "::1" || /^f[cd]/.test(value) || /^fe[89ab]/.test(value) || /^ff/.test(value);
+}
+
+async function readLimited(response) {
+  if (!response.body) return Buffer.alloc(0);
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of response.body) {
+    total += chunk.length;
+    if (total > MAX_IMAGE_BYTES) throw httpError("Artwork exceeds the 10 MB size limit", 413);
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+function httpError(message, status, cause) {
+  const error = new Error(message, cause ? { cause } : undefined);
+  error.status = status;
+  return error;
 }
 
 async function searchWorks({ title, author }, fetchImpl) {
@@ -227,7 +324,7 @@ function safeOpenLibraryUrl(value) {
   }
 }
 
-function detectImageType(buffer) {
+export function detectImageType(buffer) {
   if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
     return { mime: "image/jpeg", extension: ".jpg" };
   }

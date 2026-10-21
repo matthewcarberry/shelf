@@ -3631,7 +3631,8 @@ button.player-bar-title:hover strong {
 }
 
 .field-stack input,
-.field-stack textarea {
+.field-stack textarea,
+.artwork-url-form > input {
   width: 100%;
   min-height: 42px;
   padding: 0 12px;
@@ -3649,7 +3650,8 @@ button.player-bar-title:hover strong {
 }
 
 .field-stack input:focus,
-.field-stack textarea:focus {
+.field-stack textarea:focus,
+.artwork-url-form > input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
 }
@@ -3816,6 +3818,34 @@ button.player-bar-title:hover strong {
   min-height: 42px;
 }
 
+.artwork-custom-row {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.artwork-custom-row > button,
+.artwork-url-form > button {
+  width: auto;
+  flex: none;
+  min-height: 42px;
+}
+
+.artwork-url-form {
+  flex: 1 1 320px;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.artwork-url-form > input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+}
+
 .artwork-loading {
   min-height: 260px;
   display: flex;
@@ -3950,6 +3980,14 @@ button.player-bar-title:hover strong {
 
   .artwork-search-form {
     grid-template-columns: 1fr;
+  }
+
+  .artwork-custom-row > button {
+    width: 100%;
+  }
+
+  .artwork-url-form {
+    flex-basis: 100%;
   }
 
   .artwork-grid {
