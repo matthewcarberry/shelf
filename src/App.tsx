@@ -242,17 +242,27 @@ function getIsCompactLayout() {
   return typeof window !== "undefined" && window.matchMedia(COMPACT_LAYOUT_QUERY).matches;
 }
 
+// Sort choices were once saved on every visit, so old "shelfstream-*-sort" values
+// aren't real choices. Only a sort the user picks is saved, under this key.
+function librarySortStorageKey(libraryType: LibraryViewType) {
+  return `shelf-${libraryType}-sort`;
+}
+
+function defaultLibrarySort(libraryType: LibraryViewType): LibrarySortMode {
+  return libraryType === "ebooks" ? "title" : "recent";
+}
+
 function getStoredLibrarySort(libraryType: LibraryViewType): LibrarySortMode {
-  if (typeof window === "undefined") return "recent";
+  const fallback = defaultLibrarySort(libraryType);
+  if (typeof window === "undefined") return fallback;
 
   try {
-    const stored = window.localStorage.getItem(`shelfstream-${libraryType}-sort`) ||
-      window.localStorage.getItem("shelfstream-library-sort");
+    const stored = window.localStorage.getItem(librarySortStorageKey(libraryType));
     return stored && LIBRARY_SORT_MODES.has(stored as LibrarySortMode)
       ? (stored as LibrarySortMode)
-      : "recent";
+      : fallback;
   } catch {
-    return "recent";
+    return fallback;
   }
 }
 
@@ -4504,13 +4514,14 @@ function LibraryView({
   const [sort, setSort] = useState<LibrarySortMode>(() => getStoredLibrarySort(libraryType));
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
 
-  useEffect(() => {
+  function chooseSort(nextSort: LibrarySortMode) {
+    setSort(nextSort);
     try {
-      window.localStorage.setItem(`shelfstream-${libraryType}-sort`, sort);
+      window.localStorage.setItem(librarySortStorageKey(libraryType), nextSort);
     } catch {
       // Keep sorting available for this session if browser storage is unavailable.
     }
-  }, [libraryType, sort]);
+  }
 
   useEffect(() => {
     try {
@@ -4590,7 +4601,7 @@ function LibraryView({
             <select
               value={sort}
               aria-label={`Sort ${libraryLabel}`}
-              onChange={(event) => setSort(event.target.value as LibrarySortMode)}
+              onChange={(event) => chooseSort(event.target.value as LibrarySortMode)}
             >
               <option value="recent">Recent</option>
               <option value="title">Title</option>
