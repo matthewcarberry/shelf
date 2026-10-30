@@ -70,6 +70,41 @@ test("a partial scan only touches files inside the given folders", async () => {
   }
 });
 
+test("scans cover library folders outside the library root", async () => {
+  const { root, paths } = await tempLibrary("shelf-outside-");
+  try {
+    const elsewhere = path.join(root, "elsewhere");
+    await fs.mkdir(path.join(elsewhere, "Author"), { recursive: true });
+    await fs.mkdir(path.join(paths.libraryDir, "A"), { recursive: true });
+    await fs.writeFile(path.join(elsewhere, "Author/far.txt"), "far");
+    await fs.writeFile(path.join(paths.libraryDir, "A/near.txt"), "near");
+    const saved = [];
+    const store = {
+      listBooks: () => saved,
+      getBook: () => null,
+      upsertBook: async (book) => saved.push(book)
+    };
+
+    await scanLibrary(store, paths, { extraRoots: [elsewhere] });
+    // Books under the library root keep library-relative paths (and IDs);
+    // books elsewhere are keyed by their full path.
+    assert.deepEqual(saved.map((book) => book.relPath).sort(), [
+      "A/near.txt",
+      path.join(elsewhere, "Author/far.txt").split(path.sep).join("/")
+    ].sort());
+
+    saved.length = 0;
+    await scanLibrary(store, paths, { extraRoots: [elsewhere], onlyDirs: [path.join(elsewhere, "Author")] });
+    assert.equal(saved.length, 1);
+    // Without the folder being a library folder, it's out of bounds.
+    saved.length = 0;
+    await scanLibrary(store, paths, { onlyDirs: [path.join(elsewhere, "Author")] });
+    assert.equal(saved.length, 0);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a partial scan keeps an audiobook's tracks from other folders", async () => {
   const { root, paths } = await tempLibrary("shelf-partial-audio-");
   try {
@@ -136,4 +171,29 @@ test("scan settings fall back to defaults for bad values", () => {
     periodicScan: true,
     scanIntervalMinutes: 60
   });
+});
+
+test("the watcher also watches library folders outside the library root", async () => {
+  const { root, paths } = await tempLibrary("shelf-watch-outside-");
+  const elsewhere = path.join(root, "elsewhere");
+  await fs.mkdir(path.join(elsewhere, "Author"), { recursive: true });
+  const reported = [];
+  const watcher = createLibraryWatcher({
+    libraryDir: paths.libraryDir,
+    quietMs: 200,
+    onChange: (folders) => reported.push(folders)
+  });
+  try {
+    assert.equal(watcher.start(), true);
+    watcher.setExtraRoots([elsewhere]);
+    await fs.mkdir(path.join(elsewhere, "Author/New Book"));
+    await fs.writeFile(path.join(elsewhere, "Author/New Book/book.epub"), "x");
+    for (let i = 0; i < 40 && reported.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.deepEqual(reported, [[path.join(elsewhere, "Author/New Book")]]);
+  } finally {
+    watcher.stop();
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });

@@ -204,7 +204,7 @@ export async function scanLibrary(libraryId?: string): Promise<Book[]> {
 export type LibraryFolderListing = {
   root: string;
   path: string;
-  relativePath: string;
+  selectable: boolean;
   parent: string | null;
   folders: Array<{ name: string; path: string }>;
 };

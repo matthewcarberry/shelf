@@ -84,21 +84,23 @@ export async function scanLibrary(store, paths, options = {}) {
   await ensureStorage(paths);
   const ebookFiles = [];
   const audioFiles = [];
-  const cachedAudio = buildAudioCache(store.listBooks(), paths.libraryDir);
+  const cachedAudio = buildAudioCache(store.listBooks(), paths);
   const uploadBatchPaths = new Set(
     (options.audioBatchPaths || []).map((value) => normalizePath(value).toLowerCase())
   );
 
-  // A partial scan only walks the given library-relative folders.
+  // Libraries can also use folders outside the library root (other mounts).
+  const allRoots = [paths.libraryDir, ...outsideRoots(paths.libraryDir, options.extraRoots)];
+  // A partial scan only walks the given folders (library-relative or absolute).
   const onlyDirs = Array.isArray(options.onlyDirs) && options.onlyDirs.length > 0
     ? options.onlyDirs.map((dir) => path.resolve(paths.libraryDir, dir))
-      .filter((dir) => isInside(paths.libraryDir, dir))
+      .filter((dir) => allRoots.some((root) => isInside(root, dir)))
     : null;
-  const roots = onlyDirs || [paths.libraryDir];
+  const roots = onlyDirs || allRoots;
   const walked = new Set();
 
   for (const root of roots) for await (const filePath of walk(root)) {
-    walked.add(normalizePath(path.relative(paths.libraryDir, filePath)).toLowerCase());
+    walked.add(libraryRelPath(paths, filePath).toLowerCase());
     const ext = path.extname(filePath).toLowerCase();
     if (!ALL_BOOK_EXTENSIONS.has(ext)) {
       continue;
@@ -118,7 +120,7 @@ export async function scanLibrary(store, paths, options = {}) {
   const audioCandidates = [];
   for (const filePath of audioFiles) {
     const stat = await fs.stat(filePath);
-    const relPath = normalizePath(path.relative(paths.libraryDir, filePath));
+    const relPath = libraryRelPath(paths, filePath);
     const cached = cachedAudio.get(relPath.toLowerCase()) || null;
     const cacheMatches = Boolean(cached) &&
       (!Number.isFinite(cached.size) || cached.size === stat.size) &&
@@ -170,11 +172,11 @@ export async function scanLibrary(store, paths, options = {}) {
       if (!related) continue;
       const book = store.getBook(cached.existingBookId);
       const track = (book?.audioFiles || []).find((item) =>
-        normalizePath(item.relPath || path.relative(paths.libraryDir, item.path || "")).toLowerCase() === relKey);
-      const filePath = track?.path || path.join(paths.libraryDir, track?.relPath || relKey);
+        normalizePath(item.relPath || libraryRelPath(paths, item.path || "")).toLowerCase() === relKey);
+      const filePath = track?.path || path.resolve(paths.libraryDir, track?.relPath || relKey);
       const stat = await fs.stat(filePath).catch(() => null);
       if (!stat?.isFile()) continue;
-      const relPath = normalizePath(path.relative(paths.libraryDir, filePath));
+      const relPath = libraryRelPath(paths, filePath);
       audioItems.push({ ...cachedAudioItem({ filePath, relPath, stat, cached }), uploadBatchKey: null });
     }
   }
@@ -404,7 +406,7 @@ export function streamFile(req, res, filePath, fallbackType) {
 
 async function buildBookRecord(filePath, paths, store) {
   const stat = await fs.stat(filePath);
-  const relPath = normalizePath(path.relative(paths.libraryDir, filePath));
+  const relPath = libraryRelPath(paths, filePath);
   const ext = path.extname(filePath).toLowerCase();
   const id = crypto.createHash("sha1").update(relPath.toLowerCase()).digest("hex").slice(0, 16);
   const existing = store.getBook(id) || {};
@@ -448,7 +450,7 @@ async function buildBookRecord(filePath, paths, store) {
 
 async function inspectAudioFile(filePath, paths, suppliedStat = null) {
   const stat = suppliedStat || await fs.stat(filePath);
-  const relPath = normalizePath(path.relative(paths.libraryDir, filePath));
+  const relPath = libraryRelPath(paths, filePath);
   const ext = path.extname(filePath).toLowerCase();
   const filename = path.basename(filePath);
   const metadata = await parseFile(filePath, { duration: true }).catch(() => null);
@@ -626,13 +628,13 @@ function compareAudioTracks(a, b) {
     a.filename.localeCompare(b.filename, undefined, { numeric: true, sensitivity: "base" });
 }
 
-function buildAudioCache(books, libraryRoot) {
+function buildAudioCache(books, paths) {
   const cache = new Map();
   for (const book of books) {
     if (book.mediaType !== "audiobook" && book.readingFormat !== "audio") continue;
     for (const [index, track] of (book.audioFiles || []).entries()) {
       const relPath = normalizePath(
-        track.relPath || (track.path ? path.relative(libraryRoot, track.path) : "")
+        track.relPath || (track.path ? libraryRelPath(paths, track.path) : "")
       );
       if (!relPath) continue;
       cache.set(relPath.toLowerCase(), {
@@ -856,6 +858,29 @@ async function* walk(dir) {
 
 function albumKey(item) {
   return `${String(item.artist || "").toLowerCase()}:${String(item.album || "").toLowerCase()}`;
+}
+
+// A file's key in the library: its path from the library root, or its full
+// path when it lives outside it. Book IDs are hashed from this, so books under
+// the library root keep the IDs they always had.
+export function libraryRelPath(paths, filePath) {
+  const resolved = path.resolve(filePath);
+  return normalizePath(isInside(paths.libraryDir, resolved)
+    ? path.relative(paths.libraryDir, resolved)
+    : resolved);
+}
+
+// The folders that aren't already covered by the library root or each other.
+function outsideRoots(libraryDir, roots) {
+  const kept = [];
+  const candidates = (Array.isArray(roots) ? roots : [])
+    .map((root) => path.resolve(String(root)))
+    .filter((root) => !isInside(libraryDir, root))
+    .sort((a, b) => a.length - b.length);
+  for (const root of candidates) {
+    if (!kept.some((parent) => isInside(parent, root))) kept.push(root);
+  }
+  return kept;
 }
 
 function isInside(parent, child) {
