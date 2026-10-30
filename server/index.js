@@ -19,6 +19,7 @@ import {
   getAudioTracks,
   getPaths,
   getReadingFile,
+  libraryRelPath,
   scanLibrary,
   streamFile
 } from "./library.js";
@@ -63,6 +64,7 @@ const platform = new PlatformService(store, {
   serverIdentity: store.getServerIdentity(),
   serverName,
   libraryRoot: paths.libraryDir,
+  dataDir: paths.dataDir,
   publicUrl: process.env.PUBLIC_URL || ""
 });
 await platform.init();
@@ -521,6 +523,7 @@ app.get("/api/libraries", (req, res) => {
 app.post("/api/libraries", async (req, res, next) => {
   try {
     const library = await platform.createLibrary(req.user.id, req.body || {});
+    libraryFoldersChanged(library.rootPath);
     res.status(201).json({ library });
   } catch (error) {
     next(error);
@@ -539,12 +542,7 @@ app.patch("/api/libraries/:libraryId", async (req, res, next) => {
   try {
     const previousRoot = platform.getLibraryRoot(req.params.libraryId);
     const library = await platform.updateLibrary(req.user.id, req.params.libraryId, req.body || {});
-    if (library && library.rootPath !== previousRoot) {
-      // Pick up anything in the new folder that hasn't been scanned yet.
-      runLibraryScan(libraryScanDirs(library.rootPath))
-        .then((books) => console.log(`Library folder scan complete (${library.rootPath}): ${books.length} titles`))
-        .catch((error) => console.error(`Library folder scan failed (${library.rootPath})`, error));
-    }
+    if (library && library.rootPath !== previousRoot) libraryFoldersChanged(library.rootPath);
     res.json({ library });
   } catch (error) {
     next(error);
@@ -554,6 +552,7 @@ app.patch("/api/libraries/:libraryId", async (req, res, next) => {
 app.delete("/api/libraries/:libraryId", async (req, res, next) => {
   try {
     await platform.deleteLibrary(req.user.id, req.params.libraryId);
+    libraryWatcher.setExtraRoots(platform.outsideLibraryRoots());
     res.status(204).end();
   } catch (error) {
     next(error);
@@ -890,8 +889,9 @@ app.post("/api/books/upload", requireAdmin, upload.array("books", 50), async (re
     const deduplicated = await filterDuplicateUploads(validFiles);
     const uploadedAudioPaths = deduplicated.files
       .filter((file) => AUDIO_EXTENSIONS.has(path.extname(file.path).toLowerCase()))
-      .map((file) => normalizeUploadPath(path.relative(paths.libraryDir, file.path)));
+      .map((file) => libraryRelPath(paths, file.path));
     const books = await scanLibrary(store, paths, {
+      extraRoots: platform.outsideLibraryRoots(),
       audioBatchKey: uploadedAudioPaths.length > 1 ? crypto.randomUUID() : null,
       audioBatchPaths: uploadedAudioPaths
     });
@@ -1468,7 +1468,10 @@ let pendingFullScan = null;
 function runLibraryScan(onlyDirs = null) {
   if (!onlyDirs && pendingFullScan) return pendingFullScan;
   const task = libraryScanQueue.then(async () => {
-    const books = await scanLibrary(store, paths, onlyDirs ? { onlyDirs } : {});
+    const books = await scanLibrary(store, paths, {
+      extraRoots: platform.outsideLibraryRoots(),
+      ...(onlyDirs ? { onlyDirs } : {})
+    });
     await platform.reconcileBooks(books);
     return books;
   });
@@ -1483,16 +1486,27 @@ function runLibraryScan(onlyDirs = null) {
 }
 
 // The partial-scan folders for a library folder, or null for the whole
-// library root.
+// library root. Folders outside the library root are passed as full paths.
 function libraryScanDirs(rootPath) {
-  const relative = normalizeUploadPath(path.relative(paths.libraryDir, path.resolve(rootPath)));
-  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? [relative] : null;
+  const resolved = path.resolve(rootPath);
+  if (resolved === path.resolve(paths.libraryDir)) return null;
+  return [isPathInside(resolved, paths.libraryDir) ? path.relative(paths.libraryDir, resolved) : resolved];
+}
+
+// After a library's folder is set: watch it if it's outside the library root
+// and pick up anything in it that hasn't been scanned yet.
+function libraryFoldersChanged(rootPath) {
+  libraryWatcher.setExtraRoots(platform.outsideLibraryRoots());
+  runLibraryScan(libraryScanDirs(rootPath))
+    .then((books) => console.log(`Library folder scan complete (${rootPath}): ${books.length} titles`))
+    .catch((error) => console.error(`Library folder scan failed (${rootPath})`, error));
 }
 
 let scanSettings = null;
 let periodicScanTimer = null;
 const libraryWatcher = createLibraryWatcher({
   libraryDir: paths.libraryDir,
+  extraRoots: platform.outsideLibraryRoots(),
   onChange: (folders) => {
     const onlyDirs = scanSettings.partialScan ? folders : null;
     const label = onlyDirs ? onlyDirs.join(", ") : "whole library";
@@ -1569,10 +1583,6 @@ function uniqueFilename(dir, filename) {
   return candidate;
 }
 
-function normalizeUploadPath(value) {
-  return value.split(path.sep).join("/");
-}
-
 function metadataText(value, maxLength) {
   return String(value || "").trim().slice(0, maxLength);
 }
@@ -1588,7 +1598,7 @@ function metadataList(value, maxItems, maxLength) {
 }
 
 async function deleteManagedBookFiles(book) {
-  const allowedRoots = [paths.libraryDir, paths.dataDir];
+  const allowedRoots = [paths.libraryDir, paths.dataDir, ...platform.outsideLibraryRoots()];
   const candidates = [
     book.path,
     book.convertedPath,

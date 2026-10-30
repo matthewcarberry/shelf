@@ -150,10 +150,12 @@ test("each library shows the books inside the folder it is assigned", async () =
     await book("in-ebooks", "ebooks/Author/one.epub", "ebook");
     await book("at-root", "two.epub", "ebook");
     await book("in-audiobooks", "audiobooks/three.m4b", "audiobook");
+    await fs.mkdir(path.join(workspace, "data"), { recursive: true });
     const platform = new PlatformService(store, {
       serverIdentity: store.getServerIdentity(),
       serverName: "Test Shelf",
-      libraryRoot
+      libraryRoot,
+      dataDir: path.join(workspace, "data")
     });
     await platform.init();
     await platform.reconcileBooks(store.listBooks());
@@ -161,7 +163,8 @@ test("each library shows the books inside the folder it is assigned", async () =
     assert.equal(books.itemCount, 2);
 
     const listing = platform.listLibraryFolders(owner.id);
-    assert.equal(listing.parent, null);
+    assert.equal(listing.parent, workspace);
+    assert.equal(listing.selectable, true);
     assert.deepEqual(listing.folders.map((folder) => folder.name), ["audiobooks", "ebooks"]);
     assert.equal(platform.listLibraryFolders(owner.id, "ebooks").parent, path.resolve(libraryRoot));
 
@@ -180,13 +183,29 @@ test("each library shows the books inside the folder it is assigned", async () =
     assert.equal(platform.uploadFolderFor("ebook"), path.join(libraryRoot, "ebooks"));
 
     await assert.rejects(platform.updateLibrary(owner.id, books.id, { rootPath: "missing" }), /Folder not found/);
-    await assert.rejects(platform.updateLibrary(owner.id, books.id, { rootPath: workspace }), /must be inside/);
-    await assert.rejects(platform.updateLibrary(owner.id, books.id, { rootPath: "../" }), /must be inside/);
-    assert.throws(() => platform.listLibraryFolders(owner.id, "/etc"), /must be inside/);
+    await assert.rejects(platform.updateLibrary(owner.id, books.id, { rootPath: "/" }), /can't be used/);
+    await assert.rejects(platform.updateLibrary(owner.id, books.id, { rootPath: "/etc" }), /can't be used/);
+    await assert.rejects(platform.updateLibrary(owner.id, books.id, { rootPath: path.join(workspace, "data") }), /can't be used/);
+    assert.throws(() => platform.listLibraryFolders(owner.id, "/proc"), /can't be used/);
+    const top = platform.listLibraryFolders(owner.id, "/");
+    assert.equal(top.selectable, false);
+    assert.equal(top.parent, null);
+    assert.ok(!top.folders.some((folder) => folder.name === "proc" || folder.name === "etc"));
+
+    // A folder outside the library root (another mount) works too.
+    const elsewhere = path.join(workspace, "elsewhere");
+    await fs.mkdir(path.join(elsewhere, "Author"), { recursive: true });
+    await book("outside", path.join(elsewhere, "Author", "four.epub"), "ebook");
+    await platform.updateLibrary(owner.id, books.id, { rootPath: elsewhere });
+    assert.deepEqual(platform.outsideLibraryRoots(), [elsewhere]);
+    assert.deepEqual(platform.getBookLibraryIds("outside"), [books.id]);
+    assert.deepEqual(platform.getBookLibraryIds("in-ebooks"), []);
+    assert.equal(platform.uploadFolderFor("ebook"), elsewhere);
 
     // Pointing the library back at the root brings the book back.
     await platform.updateLibrary(owner.id, books.id, { rootPath: libraryRoot });
     assert.deepEqual(platform.getBookLibraryIds("at-root"), [books.id]);
+    assert.deepEqual(platform.outsideLibraryRoots(), []);
   } finally {
     store.close();
     await fs.rm(workspace, { recursive: true, force: true });

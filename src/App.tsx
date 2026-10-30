@@ -3742,6 +3742,7 @@ function LibraryFolderPicker({
       </div>
       <div className="library-folder-picker-list">
         {listing && !listing.folders.length ? <small>No folders inside this one.</small> : null}
+        {listing && !listing.selectable ? <small>Open a folder to use it. Folders Shelf can't see need adding as a path on the container first.</small> : null}
         {listing?.folders.map((folder) => (
           <button type="button" key={folder.path} disabled={loading} onClick={() => void open(folder.path)}>
             <FolderOpen size={15} /><span>{folder.name}</span><ChevronRight size={15} />
@@ -3750,7 +3751,7 @@ function LibraryFolderPicker({
       </div>
       <div className="library-folder-picker-actions">
         <button type="button" className="secondary-button" onClick={onCancel}>Cancel</button>
-        <button type="button" className="primary-button" disabled={loading || !listing} onClick={() => listing && onPick(listing.path)}><Check size={16} />Use this folder</button>
+        <button type="button" className="primary-button" disabled={loading || !listing?.selectable} onClick={() => listing && onPick(listing.path)}><Check size={16} />Use this folder</button>
       </div>
     </div>
   );
@@ -3880,7 +3881,7 @@ function ServerSettingsPanel({
 
         <section className="server-settings-section">
           <div className="server-settings-heading">
-            <div><h3>Libraries</h3><p>Books and audiobooks are separate libraries with their own display and access grants. Each library shows the books in its folder.</p></div>
+            <div><h3>Libraries</h3><p>Books and audiobooks are separate libraries with their own display and access grants. Each library shows the books in its folder, which can be any folder mounted into the container.</p></div>
             <span>{server.libraries.length}</span>
           </div>
           <div className="server-library-list">

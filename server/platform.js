@@ -10,13 +10,19 @@ const CLAIM_TTL_MS = 15 * 60 * 1000;
 const SERVER_ROLES = new Set(["owner", "admin", "member"]);
 const INVITABLE_ROLES = new Set(["admin", "member"]);
 const LIBRARY_TYPES = new Set(["ebook", "audiobook", "mixed"]);
+// Container folders that are never a library folder (system and app files).
+const SYSTEM_FOLDERS = [
+  "/app", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/libx32",
+  "/opt", "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/usr", "/var"
+];
 
 export class PlatformService {
-  constructor(store, { serverIdentity, serverName, libraryRoot, publicUrl = "" }) {
+  constructor(store, { serverIdentity, serverName, libraryRoot, dataDir = null, publicUrl = "" }) {
     this.store = store;
     this.serverIdentity = serverIdentity;
     this.serverName = serverName;
     this.libraryRoot = path.resolve(libraryRoot);
+    this.dataDir = dataDir ? path.resolve(dataDir) : null;
     this.publicUrl = normalizeEndpoint(publicUrl, { allowEmpty: true });
     this.controlPlaneIdentity = null;
   }
@@ -486,7 +492,7 @@ export class PlatformService {
       error.status = 400;
       throw error;
     }
-    const rootPath = normalizeLibraryPath(input.rootPath || this.libraryRoot, this.libraryRoot);
+    const rootPath = this.normalizeLibraryPath(input.rootPath || this.libraryRoot);
     assertFolderExists(rootPath);
     const now = new Date().toISOString();
     const library = {
@@ -537,7 +543,7 @@ export class PlatformService {
     const mediaType = LIBRARY_TYPES.has(patch.mediaType) ? patch.mediaType : current.media_type;
     const rootPath = patch.rootPath === undefined
       ? current.root_path
-      : normalizeLibraryPath(patch.rootPath, this.libraryRoot);
+      : this.normalizeLibraryPath(patch.rootPath);
     if (rootPath !== current.root_path) assertFolderExists(rootPath);
     await this.store.queueSqliteWrite((sqlite) => {
       sqlite.prepare(`
@@ -565,24 +571,64 @@ export class PlatformService {
     });
   }
 
-  // Lists the folders inside the mounted library root so admins can pick a
-  // library's folder without typing container paths.
+  // A library folder: any folder the container can see (the library root, or
+  // another mounted folder), except system folders and Shelf's own data.
+  normalizeLibraryPath(value) {
+    // Relative folders are taken from the library root, e.g. "audiobooks".
+    const resolved = path.resolve(this.libraryRoot, String(value || "").trim());
+    if (!this.isAllowedLibraryFolder(resolved)) {
+      const error = new Error(`${resolved} can't be used as a library folder`);
+      error.status = 400;
+      throw error;
+    }
+    return resolved;
+  }
+
+  isAllowedLibraryFolder(folder) {
+    if (isPathWithin(folder, this.libraryRoot)) return true;
+    if (folder === path.parse(folder).root) return false;
+    if (SYSTEM_FOLDERS.some((system) => isPathWithin(folder, system))) return false;
+    if (this.dataDir && (isPathWithin(folder, this.dataDir) || isPathWithin(this.dataDir, folder))) return false;
+    return true;
+  }
+
+  // Lists the folders inside a container folder so admins can pick a
+  // library's folder without typing paths. Browsing starts at the library
+  // root and can go up to the top of the container to reach other mounts.
   listLibraryFolders(accountId, folder = "") {
     this.requireRole(accountId, ["owner", "admin"]);
-    const current = normalizeLibraryPath(folder || this.libraryRoot, this.libraryRoot);
+    const current = path.resolve(this.libraryRoot, String(folder || "").trim());
+    const top = path.parse(current).root;
+    if (current !== top && !this.isAllowedLibraryFolder(current) && !isPathWithin(this.libraryRoot, current)) {
+      const error = new Error(`${current} can't be used as a library folder`);
+      error.status = 400;
+      throw error;
+    }
     assertFolderExists(current);
     const folders = fs.readdirSync(current, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
       .map((entry) => ({ name: entry.name, path: path.join(current, entry.name) }))
+      .filter((entry) => this.isAllowedLibraryFolder(entry.path) || isPathWithin(this.libraryRoot, entry.path))
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
-    const root = path.resolve(this.libraryRoot);
     return {
-      root,
+      root: this.libraryRoot,
       path: current,
-      relativePath: path.relative(root, current).split(path.sep).join("/"),
-      parent: current === root ? null : path.dirname(current),
+      selectable: this.isAllowedLibraryFolder(current),
+      parent: current === top ? null : path.dirname(current),
       folders
     };
+  }
+
+  // Library folders outside the library root, which scans and the folder
+  // watcher cover on top of the library root.
+  outsideLibraryRoots() {
+    const roots = this.store.sqlite.prepare(
+      "SELECT DISTINCT root_path FROM libraries WHERE server_id = ? AND enabled = 1"
+    ).all(this.serverIdentity.serverId).map((row) => path.resolve(row.root_path));
+    const outside = roots
+      .filter((root) => !isPathWithin(root, this.libraryRoot))
+      .sort((a, b) => a.length - b.length);
+    return outside.filter((root, index) => !outside.slice(0, index).some((parent) => isPathWithin(root, parent)));
   }
 
   // The folder new uploads of this type should land in: the first library
@@ -593,8 +639,7 @@ export class PlatformService {
       WHERE server_id = ? AND enabled = 1 AND media_type IN (?, 'mixed')
       ORDER BY sort_order LIMIT 1
     `).get(this.serverIdentity.serverId, mediaType);
-    const folder = library?.root_path ? path.resolve(library.root_path) : path.resolve(this.libraryRoot);
-    return isPathWithin(folder, path.resolve(this.libraryRoot)) ? folder : path.resolve(this.libraryRoot);
+    return library?.root_path ? path.resolve(library.root_path) : this.libraryRoot;
   }
 
   getLibraryRoot(libraryId) {
@@ -1197,17 +1242,6 @@ async function fetchServerIdentity(endpoint) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-function normalizeLibraryPath(value, allowedRoot) {
-  // Relative folders are taken from the library root, e.g. "audiobooks".
-  const resolved = path.resolve(allowedRoot, String(value || "").trim());
-  if (!isPathWithin(resolved, path.resolve(allowedRoot))) {
-    const error = new Error(`Library folders must be inside ${allowedRoot}`);
-    error.status = 400;
-    throw error;
-  }
-  return resolved;
 }
 
 function assertFolderExists(folder) {
