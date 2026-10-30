@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { nanoid } from "nanoid";
 
@@ -486,6 +487,7 @@ export class PlatformService {
       throw error;
     }
     const rootPath = normalizeLibraryPath(input.rootPath || this.libraryRoot, this.libraryRoot);
+    assertFolderExists(rootPath);
     const now = new Date().toISOString();
     const library = {
       id: `lib_${nanoid(18)}`,
@@ -536,6 +538,7 @@ export class PlatformService {
     const rootPath = patch.rootPath === undefined
       ? current.root_path
       : normalizeLibraryPath(patch.rootPath, this.libraryRoot);
+    if (rootPath !== current.root_path) assertFolderExists(rootPath);
     await this.store.queueSqliteWrite((sqlite) => {
       sqlite.prepare(`
         UPDATE libraries SET name = ?, media_type = ?, root_path = ?, updated_at = ?
@@ -560,6 +563,45 @@ export class PlatformService {
       sqlite.prepare("UPDATE libraries SET enabled = 0, updated_at = ? WHERE id = ? AND server_id = ?")
         .run(new Date().toISOString(), libraryId, this.serverIdentity.serverId);
     });
+  }
+
+  // Lists the folders inside the mounted library root so admins can pick a
+  // library's folder without typing container paths.
+  listLibraryFolders(accountId, folder = "") {
+    this.requireRole(accountId, ["owner", "admin"]);
+    const current = normalizeLibraryPath(folder || this.libraryRoot, this.libraryRoot);
+    assertFolderExists(current);
+    const folders = fs.readdirSync(current, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+      .map((entry) => ({ name: entry.name, path: path.join(current, entry.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
+    const root = path.resolve(this.libraryRoot);
+    return {
+      root,
+      path: current,
+      relativePath: path.relative(root, current).split(path.sep).join("/"),
+      parent: current === root ? null : path.dirname(current),
+      folders
+    };
+  }
+
+  // The folder new uploads of this type should land in: the first library
+  // that takes them, so an upload shows up in a library straight away.
+  uploadFolderFor(mediaType) {
+    const library = this.store.sqlite.prepare(`
+      SELECT root_path FROM libraries
+      WHERE server_id = ? AND enabled = 1 AND media_type IN (?, 'mixed')
+      ORDER BY sort_order LIMIT 1
+    `).get(this.serverIdentity.serverId, mediaType);
+    const folder = library?.root_path ? path.resolve(library.root_path) : path.resolve(this.libraryRoot);
+    return isPathWithin(folder, path.resolve(this.libraryRoot)) ? folder : path.resolve(this.libraryRoot);
+  }
+
+  getLibraryRoot(libraryId) {
+    const row = this.store.sqlite.prepare(
+      "SELECT root_path FROM libraries WHERE id = ? AND server_id = ? AND enabled = 1"
+    ).get(libraryId, this.serverIdentity.serverId);
+    return row?.root_path || null;
   }
 
   getBookLibraryIds(bookId) {
@@ -589,14 +631,14 @@ export class PlatformService {
         remove.run(book.id);
         const mediaType = book.mediaType === "audiobook" ? "audiobook" : "ebook";
         const bookPath = path.resolve(this.libraryRoot, book.relPath || book.filename || "");
-        let matches = libraries.filter((library) => {
+        // A book only shows in libraries whose folder holds it. Book IDs and
+        // progress don't depend on this, so changing a library's folder just
+        // moves books in and out of it.
+        const matches = libraries.filter((library) => {
           const typeMatches = library.media_type === "mixed" || library.media_type === mediaType;
           const rootMatches = isPathWithin(bookPath, path.resolve(library.root_path));
           return typeMatches && rootMatches;
         });
-        if (!matches.length) {
-          matches = libraries.filter((library) => library.media_type === "mixed" || library.media_type === mediaType).slice(0, 1);
-        }
         for (const library of matches) insert.run(library.id, book.id, now);
       }
     });
@@ -1158,13 +1200,28 @@ async function fetchServerIdentity(endpoint) {
 }
 
 function normalizeLibraryPath(value, allowedRoot) {
-  const resolved = path.resolve(String(value || ""));
+  // Relative folders are taken from the library root, e.g. "audiobooks".
+  const resolved = path.resolve(allowedRoot, String(value || "").trim());
   if (!isPathWithin(resolved, path.resolve(allowedRoot))) {
     const error = new Error(`Library folders must be inside ${allowedRoot}`);
     error.status = 400;
     throw error;
   }
   return resolved;
+}
+
+function assertFolderExists(folder) {
+  let isDirectory = false;
+  try {
+    isDirectory = fs.statSync(folder).isDirectory();
+  } catch {
+    isDirectory = false;
+  }
+  if (!isDirectory) {
+    const error = new Error(`Folder not found: ${folder}`);
+    error.status = 400;
+    throw error;
+  }
 }
 
 function isPathWithin(candidate, root) {

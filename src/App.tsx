@@ -21,7 +21,9 @@ import {
   Contrast,
   Copy,
   ExternalLink,
+  FolderOpen,
   FolderPlus,
+  CornerLeftUp,
   Edit3,
   Ellipsis,
   Grid2X2,
@@ -111,6 +113,7 @@ import {
   savePreferences,
   savePlatformPreferences,
   scanLibrary,
+  listLibraryFolders,
   getLibraryScanSettings,
   updateLibraryScanSettings,
   saveProgress,
@@ -127,7 +130,7 @@ import {
   updateReadingActivity,
   updateUserPassword
 } from "./api";
-import type { LibraryScanSettings, LibraryScanState } from "./api";
+import type { LibraryFolderListing, LibraryScanSettings, LibraryScanState } from "./api";
 import type {
   Alignment,
   ArtworkCandidate,
@@ -1480,12 +1483,12 @@ export function App() {
     }
   };
 
-  const handleLibraryScan = async () => {
+  const handleLibraryScan = async (library: ShelfLibrary) => {
     if (libraryScanning) return;
     setLibraryScanning(true);
-    setMessage("Scanning library files…");
+    setMessage(`Scanning ${library.name} files…`);
     try {
-      const scanned = await scanLibrary();
+      const scanned = await scanLibrary(library.id);
       await Promise.all([refreshBooks(), refreshPlatform()]);
       setMessage(`Library scan complete: ${scanned.length} titles.`);
     } catch (error) {
@@ -1634,7 +1637,7 @@ export function App() {
                   canScan={canManageServer}
                   scanning={libraryScanning}
                   onClick={() => handleLibrarySelect(library)}
-                  onScan={() => void handleLibraryScan()}
+                  onScan={() => void handleLibraryScan(library)}
                 />
               ))}
               <span className="sidebar-section-label">You</span>
@@ -3700,6 +3703,59 @@ function LibraryScanSettingsSection({ onError }: { onError: (error: unknown, fal
   );
 }
 
+function LibraryFolderPicker({
+  initialPath,
+  onPick,
+  onCancel,
+  onError
+}: {
+  initialPath: string;
+  onPick: (folder: string) => void;
+  onCancel: () => void;
+  onError: (error: unknown, fallback: string) => void;
+}) {
+  const [listing, setListing] = useState<LibraryFolderListing | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const open = useCallback(async (folder: string) => {
+    setLoading(true);
+    try {
+      setListing(await listLibraryFolders(folder));
+    } catch (error) {
+      // A folder that was removed falls back to the library root.
+      if (folder) {
+        try { setListing(await listLibraryFolders("")); return; } catch { /* reported below */ }
+      }
+      onError(error, "Unable to list library folders");
+    } finally {
+      setLoading(false);
+    }
+  }, [onError]);
+
+  useEffect(() => { void open(initialPath); }, [initialPath, open]);
+
+  return (
+    <div className="library-folder-picker">
+      <div className="library-folder-picker-path">
+        <button type="button" className="ghost-button" title="Up one folder" disabled={loading || !listing?.parent} onClick={() => listing?.parent && void open(listing.parent)}><CornerLeftUp size={15} /></button>
+        <code>{listing?.path || initialPath || "Loading…"}</code>
+      </div>
+      <div className="library-folder-picker-list">
+        {listing && !listing.folders.length ? <small>No folders inside this one.</small> : null}
+        {listing?.folders.map((folder) => (
+          <button type="button" key={folder.path} disabled={loading} onClick={() => void open(folder.path)}>
+            <FolderOpen size={15} /><span>{folder.name}</span><ChevronRight size={15} />
+          </button>
+        ))}
+      </div>
+      <div className="library-folder-picker-actions">
+        <button type="button" className="secondary-button" onClick={onCancel}>Cancel</button>
+        <button type="button" className="primary-button" disabled={loading || !listing} onClick={() => listing && onPick(listing.path)}><Check size={16} />Use this folder</button>
+      </div>
+    </div>
+  );
+}
+
 function ServerSettingsPanel({
   server,
   currentAccountId,
@@ -3731,6 +3787,8 @@ function ServerSettingsPanel({
     mediaType: "ebook" as ShelfLibrary["mediaType"],
     rootPath: server.libraries[0]?.rootPath || ""
   });
+  // Which folder picker is open: a library's id, "new" for the add form, or null.
+  const [folderPickerFor, setFolderPickerFor] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -3822,7 +3880,7 @@ function ServerSettingsPanel({
 
         <section className="server-settings-section">
           <div className="server-settings-heading">
-            <div><h3>Libraries</h3><p>Books and audiobooks are separate libraries with their own display and access grants.</p></div>
+            <div><h3>Libraries</h3><p>Books and audiobooks are separate libraries with their own display and access grants. Each library shows the books in its folder.</p></div>
             <span>{server.libraries.length}</span>
           </div>
           <div className="server-library-list">
@@ -3838,6 +3896,7 @@ function ServerSettingsPanel({
                     await refreshOverview();
                   } catch (error) { onError(error, "Unable to rename library"); }
                 }}><Edit3 size={15} /></button>
+                <button type="button" className="ghost-button" title={`Choose the folder for ${library.name}`} aria-expanded={folderPickerFor === library.id} onClick={() => setFolderPickerFor((value) => value === library.id ? null : library.id)}><FolderOpen size={15} /></button>
                 <button type="button" className="ghost-button danger" title={`Remove ${library.name}`} disabled={server.libraries.length <= 1} onClick={async () => {
                   if (!window.confirm(`Remove the “${library.name}” library? Media files will not be deleted.`)) return;
                   try {
@@ -3845,6 +3904,21 @@ function ServerSettingsPanel({
                     await refreshOverview();
                   } catch (error) { onError(error, "Unable to remove library"); }
                 }}><Trash2 size={15} /></button>
+                {folderPickerFor === library.id ? (
+                  <LibraryFolderPicker
+                    initialPath={library.rootPath}
+                    onCancel={() => setFolderPickerFor(null)}
+                    onError={onError}
+                    onPick={async (rootPath) => {
+                      setFolderPickerFor(null);
+                      if (rootPath === library.rootPath) return;
+                      try {
+                        await updateLibrary(library.id, { rootPath });
+                        await refreshOverview();
+                      } catch (error) { onError(error, "Unable to change the library folder"); }
+                    }}
+                  />
+                ) : null}
               </article>
             ))}
           </div>
@@ -3863,8 +3937,21 @@ function ServerSettingsPanel({
             <select value={libraryForm.mediaType} onChange={(event) => setLibraryForm((value) => ({ ...value, mediaType: event.target.value as ShelfLibrary["mediaType"] }))}>
               <option value="ebook">Books</option><option value="audiobook">Audiobooks</option><option value="mixed">Mixed</option>
             </select>
-            <input value={libraryForm.rootPath} onChange={(event) => setLibraryForm((value) => ({ ...value, rootPath: event.target.value }))} placeholder="Folder inside the mounted library root" />
+            <button type="button" className="secondary-button library-folder-choice" title="Choose the folder this library pulls from" aria-expanded={folderPickerFor === "new"} onClick={() => setFolderPickerFor((value) => value === "new" ? null : "new")}>
+              <FolderOpen size={16} /><span>{libraryForm.rootPath || "Choose folder"}</span>
+            </button>
             <button type="submit" className="secondary-button" disabled={loading || !libraryForm.name.trim()}><FolderPlus size={16} />Add library</button>
+            {folderPickerFor === "new" ? (
+              <LibraryFolderPicker
+                initialPath={libraryForm.rootPath}
+                onCancel={() => setFolderPickerFor(null)}
+                onError={onError}
+                onPick={(rootPath) => {
+                  setFolderPickerFor(null);
+                  setLibraryForm((value) => ({ ...value, rootPath }));
+                }}
+              />
+            ) : null}
           </form>
         </section>
 
