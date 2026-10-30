@@ -141,6 +141,55 @@ test("a partial scan keeps an audiobook's tracks from other folders", async () =
   }
 });
 
+test("moved audio files keep their audiobook and skip re-reading tags", async () => {
+  const { root, paths } = await tempLibrary("shelf-moved-audio-");
+  try {
+    const newFolder = path.join(paths.libraryDir, "audiobooks/Author/Book");
+    await fs.mkdir(newFolder, { recursive: true });
+    const file = path.join(newFolder, "01.mp3");
+    // Not a real mp3: re-reading its tags would lose the cached title.
+    await fs.writeFile(file, "moved");
+    const stat = await fs.stat(file);
+    const existing = {
+      id: "existing-audiobook",
+      title: "Book",
+      author: "Someone",
+      readingFormat: "audio",
+      mediaType: "audiobook",
+      audioFiles: [{
+        path: path.join(paths.libraryDir, "Author/Book/01.mp3"),
+        relPath: "Author/Book/01.mp3",
+        filename: "01.mp3",
+        title: "Cached Part 1",
+        size: stat.size,
+        modifiedMs: stat.mtimeMs
+      }]
+    };
+    const saved = [];
+    const store = {
+      listBooks: () => [existing],
+      getBook: (id) => id === existing.id ? existing : null,
+      upsertBook: async (book) => saved.push(book)
+    };
+
+    await scanLibrary(store, paths);
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].id, existing.id);
+    assert.equal(saved[0].audioFiles[0].relPath, "audiobooks/Author/Book/01.mp3");
+    assert.equal(saved[0].audioFiles[0].title, "Cached Part 1");
+
+    // A file that still exists at its old place isn't treated as moved.
+    await fs.mkdir(path.join(paths.libraryDir, "Author/Book"), { recursive: true });
+    await fs.copyFile(file, path.join(paths.libraryDir, "Author/Book/01.mp3"));
+    await fs.utimes(path.join(paths.libraryDir, "Author/Book/01.mp3"), stat.atime, stat.mtime);
+    saved.length = 0;
+    await scanLibrary(store, paths, { onlyDirs: ["audiobooks"] });
+    assert.notEqual(saved[0].id, existing.id);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the watcher reports the folder a new book lands in", async () => {
   const { root, paths } = await tempLibrary("shelf-watch-");
   const watcher = createLibraryWatcher({

@@ -117,11 +117,13 @@ export async function scanLibrary(store, paths, options = {}) {
     await store.upsertBook(book);
   }
 
+  const movedAudio = buildMovedAudioIndex(cachedAudio);
   const audioCandidates = [];
   for (const filePath of audioFiles) {
     const stat = await fs.stat(filePath);
     const relPath = libraryRelPath(paths, filePath);
-    const cached = cachedAudio.get(relPath.toLowerCase()) || null;
+    let cached = cachedAudio.get(relPath.toLowerCase()) || null;
+    if (!cached) cached = await findMovedAudio(movedAudio, filePath, stat, paths, walked);
     const cacheMatches = Boolean(cached) &&
       (!Number.isFinite(cached.size) || cached.size === stat.size) &&
       (!Number.isFinite(cached.modifiedMs) || Math.abs(cached.modifiedMs - stat.mtimeMs) < 1);
@@ -638,6 +640,7 @@ function buildAudioCache(books, paths) {
       );
       if (!relPath) continue;
       cache.set(relPath.toLowerCase(), {
+        relPath,
         existingBookId: book.id,
         cachedOrder: index,
         title: track.title,
@@ -652,6 +655,33 @@ function buildAudioCache(books, paths) {
     }
   }
   return cache;
+}
+
+// Known tracks by filename, size and modified time, so a file that was moved
+// (for example after a library folder or mount change) is recognised without
+// re-reading its tags, and stays part of the same audiobook (same ID, so
+// listening progress is kept). Ambiguous matches are left out.
+function buildMovedAudioIndex(cachedAudio) {
+  const index = new Map();
+  for (const [relKey, cached] of cachedAudio) {
+    if (!Number.isFinite(cached.size) || !Number.isFinite(cached.modifiedMs)) continue;
+    const key = movedAudioKey(path.posix.basename(relKey), cached.size, cached.modifiedMs);
+    index.set(key, index.has(key) ? null : { relKey, cached });
+  }
+  return index;
+}
+
+async function findMovedAudio(index, filePath, stat, paths, walked) {
+  const match = index.get(movedAudioKey(path.basename(filePath), stat.size, stat.mtimeMs));
+  if (!match) return null;
+  // Only a file that is gone from its old place counts as moved.
+  if (walked.has(match.relKey)) return null;
+  const oldStat = await fs.stat(path.resolve(paths.libraryDir, match.cached.relPath)).catch(() => null);
+  return oldStat ? null : match.cached;
+}
+
+function movedAudioKey(filename, size, modifiedMs) {
+  return `${filename.toLowerCase()}|${size}|${Math.round(modifiedMs)}`;
 }
 
 function cachedAudioItem({ filePath, relPath, stat, cached }) {
