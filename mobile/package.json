@@ -1,6 +1,6 @@
 {
   "name": "com.shelfstream.mobile",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
