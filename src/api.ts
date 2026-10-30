@@ -193,11 +193,24 @@ export async function updateServerEndpoint(endpointUrl: string): Promise<Platfor
   });
 }
 
-export async function scanLibrary(): Promise<Book[]> {
+export async function scanLibrary(libraryId?: string): Promise<Book[]> {
   const data = await request<{ books: Book[] }>("/api/library/scan", {
-    method: "POST"
+    method: "POST",
+    body: JSON.stringify(libraryId ? { libraryId } : {})
   });
   return data.books;
+}
+
+export type LibraryFolderListing = {
+  root: string;
+  path: string;
+  relativePath: string;
+  parent: string | null;
+  folders: Array<{ name: string; path: string }>;
+};
+
+export async function listLibraryFolders(folder = ""): Promise<LibraryFolderListing> {
+  return request(`/api/library/folders?path=${encodeURIComponent(folder)}`);
 }
 
 export type LibraryScanSettings = {

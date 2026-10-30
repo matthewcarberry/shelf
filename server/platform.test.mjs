@@ -117,3 +117,78 @@ test("requires HTTPS for non-local remote server endpoints", async () => {
     await fs.rm(workspace, { recursive: true, force: true });
   }
 });
+
+test("each library shows the books inside the folder it is assigned", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "shelf-library-folders-"));
+  const libraryRoot = path.join(workspace, "library");
+  await fs.mkdir(path.join(libraryRoot, "ebooks", "Author"), { recursive: true });
+  await fs.mkdir(path.join(libraryRoot, "audiobooks"), { recursive: true });
+  await fs.mkdir(path.join(libraryRoot, ".hidden"), { recursive: true });
+  const store = new SqliteStore(path.join(workspace, "shelfstream.json"));
+
+  try {
+    await store.init();
+    const owner = await store.createUser({
+      username: "owner",
+      displayName: "Owner",
+      passwordHash: "scrypt:test:test",
+      role: "admin"
+    });
+    const book = (id, relPath, mediaType) => store.upsertBook({
+      id,
+      title: id,
+      author: "Shelf",
+      filename: path.basename(relPath),
+      relPath,
+      ext: path.extname(relPath),
+      size: 1,
+      status: "ready",
+      readingFormat: mediaType === "audiobook" ? "audio" : "epub",
+      mediaType,
+      addedAt: new Date().toISOString()
+    });
+    await book("in-ebooks", "ebooks/Author/one.epub", "ebook");
+    await book("at-root", "two.epub", "ebook");
+    await book("in-audiobooks", "audiobooks/three.m4b", "audiobook");
+    const platform = new PlatformService(store, {
+      serverIdentity: store.getServerIdentity(),
+      serverName: "Test Shelf",
+      libraryRoot
+    });
+    await platform.init();
+    await platform.reconcileBooks(store.listBooks());
+    const [books, audiobooks] = platform.listLibraries(owner.id);
+    assert.equal(books.itemCount, 2);
+
+    const listing = platform.listLibraryFolders(owner.id);
+    assert.equal(listing.parent, null);
+    assert.deepEqual(listing.folders.map((folder) => folder.name), ["audiobooks", "ebooks"]);
+    assert.equal(platform.listLibraryFolders(owner.id, "ebooks").parent, path.resolve(libraryRoot));
+
+    await store.setProgress(owner.id, "in-ebooks", { percent: 0.4 });
+    const updated = await platform.updateLibrary(owner.id, books.id, { rootPath: path.join(libraryRoot, "ebooks") });
+    assert.equal(updated.rootPath, path.join(libraryRoot, "ebooks"));
+    assert.equal(updated.itemCount, 1);
+    assert.deepEqual(platform.getBookLibraryIds("in-ebooks"), [books.id]);
+    assert.deepEqual(platform.getBookLibraryIds("at-root"), []);
+    assert.equal(store.getProgress(owner.id, "in-ebooks").percent, 0.4);
+
+    // Relative folders are read from the library root.
+    await platform.updateLibrary(owner.id, audiobooks.id, { rootPath: "audiobooks" });
+    assert.equal(platform.getLibraryRoot(audiobooks.id), path.join(libraryRoot, "audiobooks"));
+    assert.equal(platform.uploadFolderFor("audiobook"), path.join(libraryRoot, "audiobooks"));
+    assert.equal(platform.uploadFolderFor("ebook"), path.join(libraryRoot, "ebooks"));
+
+    await assert.rejects(platform.updateLibrary(owner.id, books.id, { rootPath: "missing" }), /Folder not found/);
+    await assert.rejects(platform.updateLibrary(owner.id, books.id, { rootPath: workspace }), /must be inside/);
+    await assert.rejects(platform.updateLibrary(owner.id, books.id, { rootPath: "../" }), /must be inside/);
+    assert.throws(() => platform.listLibraryFolders(owner.id, "/etc"), /must be inside/);
+
+    // Pointing the library back at the root brings the book back.
+    await platform.updateLibrary(owner.id, books.id, { rootPath: libraryRoot });
+    assert.deepEqual(platform.getBookLibraryIds("at-root"), [books.id]);
+  } finally {
+    store.close();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});

@@ -4767,6 +4767,94 @@ button.player-bar-title:hover strong {
   grid-template-columns: minmax(120px, 0.8fr) 150px minmax(180px, 1.4fr) auto;
 }
 
+.server-library-list article {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+}
+
+.library-folder-choice {
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.library-folder-choice span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-folder-picker {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+}
+
+.library-folder-picker-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.library-folder-picker-path code {
+  overflow: hidden;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-folder-picker-list {
+  display: grid;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.library-folder-picker-list > small {
+  padding: 6px 4px;
+  color: var(--muted);
+}
+
+.library-folder-picker-list button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.library-folder-picker-list button:hover {
+  background: var(--panel-soft);
+}
+
+.library-folder-picker-list button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-folder-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.library-folder-picker-actions button {
+  flex: 0 0 auto;
+  width: auto;
+}
+
 .server-invite-form {
   grid-template-columns: minmax(180px, 1fr) 150px minmax(220px, 1.3fr) auto;
   align-items: end;
@@ -4972,7 +5060,7 @@ button.player-bar-title:hover strong {
   }
 
   .server-library-list article {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   }
 
   .server-member-list article {

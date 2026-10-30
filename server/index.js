@@ -75,14 +75,18 @@ const castReceiverAppId = String(process.env.CAST_APP_ID || "").trim() || null;
 
 const upload = multer({
   storage: multer.diskStorage({
-    destination(_req, _file, cb) {
-      fsSync.mkdirSync(paths.libraryDir, { recursive: true });
-      cb(null, paths.libraryDir);
+    // Uploads go into the folder of the first library that takes their type.
+    destination(_req, file, cb) {
+      const ext = path.extname(file.originalname).toLowerCase();
+      const folder = platform.uploadFolderFor(AUDIO_EXTENSIONS.has(ext) ? "audiobook" : "ebook");
+      fsSync.mkdirSync(folder, { recursive: true });
+      file.shelfstreamFolder = folder;
+      cb(null, folder);
     },
     filename(_req, file, cb) {
       const sanitized = sanitize(file.originalname) || `book-${Date.now()}`;
-      file.shelfstreamCanonicalPath = path.join(paths.libraryDir, sanitized);
-      cb(null, uniqueFilename(paths.libraryDir, sanitized));
+      file.shelfstreamCanonicalPath = path.join(file.shelfstreamFolder, sanitized);
+      cb(null, uniqueFilename(file.shelfstreamFolder, sanitized));
     }
   })
 });
@@ -523,9 +527,24 @@ app.post("/api/libraries", async (req, res, next) => {
   }
 });
 
+app.get("/api/library/folders", (req, res, next) => {
+  try {
+    res.json(platform.listLibraryFolders(req.user.id, String(req.query.path || "")));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.patch("/api/libraries/:libraryId", async (req, res, next) => {
   try {
+    const previousRoot = platform.getLibraryRoot(req.params.libraryId);
     const library = await platform.updateLibrary(req.user.id, req.params.libraryId, req.body || {});
+    if (library && library.rootPath !== previousRoot) {
+      // Pick up anything in the new folder that hasn't been scanned yet.
+      runLibraryScan(libraryScanDirs(library.rootPath))
+        .then((books) => console.log(`Library folder scan complete (${library.rootPath}): ${books.length} titles`))
+        .catch((error) => console.error(`Library folder scan failed (${library.rootPath})`, error));
+    }
     res.json({ library });
   } catch (error) {
     next(error);
@@ -826,7 +845,14 @@ app.post("/api/books/:bookId/send-to-kindle", async (req, res, next) => {
 
 app.post("/api/library/scan", requireAdmin, async (req, res, next) => {
   try {
-    const books = await runLibraryScan();
+    // With a library, only that library's folder is scanned.
+    const libraryId = req.body?.libraryId ? String(req.body.libraryId) : null;
+    const root = libraryId ? platform.getLibraryRoot(libraryId) : null;
+    if (libraryId && !root) {
+      res.status(404).json({ error: "Library not found" });
+      return;
+    }
+    const books = await runLibraryScan(root ? libraryScanDirs(root) : null);
     res.json({ books: books.map((book) => decoratePlatformBook(book, req.user.id)) });
   } catch (error) {
     next(error);
@@ -1454,6 +1480,13 @@ function runLibraryScan(onlyDirs = null) {
     });
   }
   return task;
+}
+
+// The partial-scan folders for a library folder, or null for the whole
+// library root.
+function libraryScanDirs(rootPath) {
+  const relative = normalizeUploadPath(path.relative(paths.libraryDir, path.resolve(rootPath)));
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? [relative] : null;
 }
 
 let scanSettings = null;
