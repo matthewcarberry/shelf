@@ -1,0 +1,179 @@
+name: iOS app
+
+# Builds the iPhone app (mobile/) on GitHub's macOS machines, so no Mac is needed.
+# - Every push or pull request that touches mobile/ checks that the app compiles.
+# - Pushes to main (and manual runs) also sign the app and upload it to TestFlight,
+#   once the Apple secrets below exist. Without them the upload job is skipped.
+#
+# Repository secrets used for TestFlight:
+#   APPLE_TEAM_ID                 10-character Team ID from developer.apple.com > Membership
+#   ASC_KEY_ID                    App Store Connect API key ID (key needs the Admin role)
+#   ASC_ISSUER_ID                 Issuer ID shown above the key list in App Store Connect
+#   ASC_KEY_P8                    Full text of the downloaded AuthKey_XXXX.p8 file
+
+on:
+  push:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: mobile
+
+jobs:
+  build:
+    name: Compile for the iOS simulator
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install JavaScript packages
+        run: npm ci
+
+      - name: Type-check and test
+        run: |
+          npm run typecheck
+          npx jest
+
+      - name: Install CocoaPods
+        working-directory: mobile/ios
+        run: pod install
+
+      - name: Build (Release, unsigned)
+        working-directory: mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace ShelfStreamMobile.xcworkspace \
+            -scheme ShelfStreamMobile \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee "$RUNNER_TEMP/xcodebuild.log" | grep -E "error:|warning: .*deprecated|\*\* BUILD" || true
+          grep -q "\*\* BUILD SUCCEEDED \*\*" "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Show build errors
+        if: failure()
+        run: grep -n -B2 -A8 "error:" "$RUNNER_TEMP/xcodebuild.log" | head -300 || tail -200 "$RUNNER_TEMP/xcodebuild.log"
+
+  testflight:
+    name: Upload to TestFlight
+    needs: build
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - name: Check for Apple secrets
+        id: secrets
+        working-directory: .
+        run: |
+          if [ -n "$APPLE_TEAM_ID" ] && [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER_ID" ] && [ -n "$ASC_KEY_P8" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Apple secrets are not set, so the TestFlight upload is skipped."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install packages
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          npm ci
+          cd ios && pod install
+
+      - name: Write API key
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s\n' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey.p8"
+
+      - name: Archive (signed by Apple's cloud signing)
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace ShelfStreamMobile.xcworkspace \
+            -scheme ShelfStreamMobile \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Shelf.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            archive | tee "$RUNNER_TEMP/archive.log" | grep -E "error:|\*\* ARCHIVE" || true
+          grep -q "\*\* ARCHIVE SUCCEEDED \*\*" "$RUNNER_TEMP/archive.log"
+
+      - name: Export and upload to TestFlight
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: mobile/ios
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Shelf.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Show archive errors
+        if: failure() && steps.secrets.outputs.ready == 'true'
+        run: grep -n -B2 -A8 "error:" "$RUNNER_TEMP/archive.log" | head -300 || true
+
+      - name: Remove API key
+        if: always()
+        working-directory: .
+        run: rm -rf "$RUNNER_TEMP/keys"
