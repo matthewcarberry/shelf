@@ -16,7 +16,7 @@ Native iOS and Android clients now live in [`mobile/`](mobile/README.md). They a
 - Multi-server accounts: one Shelf account can own or join multiple independent servers, switch among them in the web and mobile clients, and connect with short-lived server-scoped tickets.
 - First-class libraries: each server can expose separate Books, Audiobooks, or mixed libraries and grant each invited member access only to selected libraries.
 - Profiles: each user has reading/listening completion totals, active-time hours, history, ratings and reviews, notes and highlights, and a persistent Read List.
-- Send to Kindle: every EPUB can be emailed to a user's saved `@kindle.com` address through the configured Shelf SMTP account.
+- Send to Kindle: EPUB and PDF books (and books Shelf has converted to EPUB) can be emailed to the `@kindle.com` address each user saves in Settings, through the configured Shelf SMTP account. Add the `EMAIL_FROM` address to Amazon's Approved Personal Document Email List. `KINDLE_MAX_ATTACHMENT_MB` (default 25) is the largest email your SMTP provider accepts; Shelf allows books up to about 73% of it to leave room for attachment encoding.
 - Global light, dark, and high-contrast display themes saved per user.
 
 DRM-protected books cannot be read or converted by this app.
