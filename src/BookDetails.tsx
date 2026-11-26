@@ -24,7 +24,7 @@ import {
   formatPercent,
   formatShortDate,
   isBookRead,
-  isSendableEpub
+  isSendableToKindle
 } from "./App";
 import {
   isAudiobookStoredOffline,
@@ -340,7 +340,7 @@ export function BookDetailsView({
                   : offline.stored ? "Available offline" : "Make available offline"}
               </button>
             ) : null}
-            {isSendableEpub(book) ? (
+            {isSendableToKindle(book) ? (
               <button type="button" className="book-details-action" onClick={() => onSendToKindle(book)}>
                 <Send size={17} />
                 Send to Kindle

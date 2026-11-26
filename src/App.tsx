@@ -276,9 +276,17 @@ function viewForMediaType(mediaType: MediaType): LibraryViewType {
   return mediaType === "audiobook" ? "audiobooks" : "ebooks";
 }
 
-export function isSendableEpub(book: Book) {
-  return book.mediaType === "ebook" && book.ext.toLowerCase() === ".epub";
+// Amazon's Send to Kindle takes EPUB and PDF. Other formats go as the EPUB
+// copy Shelf converts them to, once it exists.
+export function isSendableToKindle(book: Book) {
+  if (book.mediaType !== "ebook") {
+    return false;
+  }
+  const ext = book.ext.toLowerCase();
+  return ext === ".epub" || ext === ".pdf" || (book.readingFormat === "epub" && book.status === "ready");
 }
+
+const KINDLE_EMAIL_PATTERN = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@kindle\.com$/i;
 
 function useActiveUsageTimer(
   enabled: boolean,
@@ -1371,7 +1379,7 @@ export function App() {
 
   const handleOpenSendToKindle = useCallback(async (book: Book) => {
     if (book.mediaType === "audiobook" || book.ext.toLowerCase() !== ".epub") {
-      setMessage("Send to Kindle is available only for EPUB files.");
+      setMessage("Send to Kindle works with EPUB and PDF books, and with books Shelf has converted to EPUB.");
       return;
     }
 
@@ -1402,7 +1410,7 @@ export function App() {
       setKindleSettings(null);
       setMessage(`“${kindleBook.title}” was sent to ${result.kindleEmail}.`);
     } catch (error) {
-      handleError(error, "Unable to send EPUB to Kindle");
+      handleError(error, "Unable to send this book to Kindle");
       throw error;
     } finally {
       setKindleSending(false);
@@ -2689,8 +2697,112 @@ function SettingsPanel({
             onChange={(seconds) => onPreferencesChange({ skipBackSeconds: seconds })}
           />
         </section>
+
+        <KindleSettingsSection
+          kindleEmail={preferences.kindleEmail}
+          onSave={(kindleEmail) => onPreferencesChange({ kindleEmail })}
+        />
       </section>
     </div>
+  );
+}
+
+function KindleSettingsSection({
+  kindleEmail,
+  onSave
+}: {
+  kindleEmail: string;
+  onSave: (kindleEmail: string) => void;
+}) {
+  const [settings, setSettings] = useState<KindleSettings | null>(null);
+  const [draft, setDraft] = useState(kindleEmail);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    getKindleSettings()
+      .then((loaded) => {
+        if (!cancelled) {
+          setSettings(loaded);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    setDraft(kindleEmail);
+  }, [kindleEmail]);
+
+  const commit = () => {
+    const next = draft.trim().toLowerCase();
+    setDraft(next);
+    if (next && !KINDLE_EMAIL_PATTERN.test(next)) {
+      setMessage("Use the @kindle.com address shown for your Kindle in Amazon's Manage Your Content and Devices.");
+      return;
+    }
+    setMessage("");
+    if (next !== kindleEmail) {
+      onSave(next);
+      setMessage(next ? "Kindle address saved." : "Kindle address removed.");
+    }
+  };
+
+  return (
+    <section className="settings-section kindle-settings-section" aria-labelledby="settings-kindle-title">
+      <h3 id="settings-kindle-title">Send to Kindle</h3>
+      <label className="field-stack">
+        <span>Your Kindle email address</span>
+        <input
+          type="email"
+          inputMode="email"
+          autoComplete="off"
+          placeholder="your-device@kindle.com"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            }
+          }}
+        />
+        <small>
+          {message || "Send to Kindle on a book emails it to this address. EPUB and PDF books can be sent."}
+        </small>
+      </label>
+
+      {settings && !settings.deliveryConfigured ? (
+        <div className="kindle-warning">
+          <strong>Email delivery is not configured</strong>
+          <span>An administrator must configure Shelf’s SMTP settings before books can be sent.</span>
+        </div>
+      ) : null}
+
+      {settings?.senderEmail ? (
+        <div className="kindle-approval-note">
+          <Send size={19} />
+          <div>
+            <strong>Books are sent from {settings.senderEmail}</strong>
+            <span>
+              Add this address to the Approved Personal Document Email List in Amazon's Personal Document
+              Settings, or Amazon will ignore the email. Shelf can send books up to{" "}
+              {formatFileSize(settings.maxAttachmentBytes)}.
+            </span>
+            <a
+              href="https://www.amazon.com/hz/mycd/myx#/home/settings/payment"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open Amazon Personal Document Settings
+            </a>
+          </div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -2869,8 +2981,10 @@ function SendToKindleDialog({
   }, [settings]);
 
   const normalizedEmail = kindleEmail.trim().toLowerCase();
-  const emailValid = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@kindle\.com$/i.test(normalizedEmail);
-  const tooLarge = Boolean(settings && book.size > settings.maxAttachmentBytes);
+  const emailValid = KINDLE_EMAIL_PATTERN.test(normalizedEmail);
+  // A converted book is sent as its EPUB copy, whose size the server checks.
+  const sendsOriginalFile = [".epub", ".pdf"].includes(book.ext.toLowerCase());
+  const tooLarge = Boolean(settings && sendsOriginalFile && book.size > settings.maxAttachmentBytes);
   const canSend = Boolean(settings?.deliveryConfigured && emailValid && !tooLarge && !loading && !sending);
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -2883,7 +2997,7 @@ function SendToKindleDialog({
     try {
       await onSend(normalizedEmail);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to send this EPUB to Kindle.");
+      setMessage(error instanceof Error ? error.message : "Unable to send this book to Kindle.");
     }
   };
 
@@ -2918,14 +3032,14 @@ function SendToKindleDialog({
             {!settings?.deliveryConfigured ? (
               <div className="kindle-warning">
                 <strong>Email delivery is not configured</strong>
-                <span>An administrator must configure Shelf’s SMTP settings before EPUBs can be sent.</span>
+                <span>An administrator must configure Shelf’s SMTP settings before books can be sent.</span>
               </div>
             ) : null}
 
             {tooLarge && settings ? (
               <div className="kindle-warning">
-                <strong>This EPUB is too large to email</strong>
-                <span>The configured limit is {formatFileSize(settings.maxAttachmentBytes)}.</span>
+                <strong>This book is too large to email</strong>
+                <span>Shelf can email books up to {formatFileSize(settings.maxAttachmentBytes)}. Use the Send to Kindle app or website for larger files.</span>
               </div>
             ) : null}
 
@@ -2967,7 +3081,7 @@ function SendToKindleDialog({
               </button>
               <button type="submit" className="primary-button" disabled={!canSend}>
                 {sending ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-                {sending ? "Sending…" : "Send EPUB"}
+                {sending ? "Sending…" : "Send to Kindle"}
               </button>
             </div>
           </>
@@ -4869,7 +4983,7 @@ function LibraryBookCard({
       <div className="library-card-footer">
         <span>{formatPercent(percent)}{book.mediaType === "audiobook" ? " listened" : ""}</span>
         <StatusPill book={book} />
-        {isSendableEpub(book) ? (
+        {isSendableToKindle(book) ? (
           <button
             type="button"
             className="library-kindle-button"
