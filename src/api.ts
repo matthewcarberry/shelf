@@ -8,6 +8,7 @@ import type {
   Highlight,
   KindleSendResult,
   KindleSettings,
+  KoboOverview,
   MediaType,
   ConnectionTicket,
   PlatformOverview,
@@ -348,6 +349,22 @@ export async function sendBookToKindle(
     method: "POST",
     body: JSON.stringify({ kindleEmail })
   });
+}
+
+export async function getKoboOverview(): Promise<KoboOverview> {
+  return request("/api/kobo");
+}
+
+export async function createKoboLink(): Promise<KoboOverview> {
+  return request("/api/kobo/links", { method: "POST" });
+}
+
+export async function deleteKoboLink(linkId: string): Promise<KoboOverview> {
+  return request(`/api/kobo/links/${encodeURIComponent(linkId)}`, { method: "DELETE" });
+}
+
+export async function setBookOnKobo(bookId: string, onKobo: boolean): Promise<{ onKobo: boolean; linked: boolean }> {
+  return request(`/api/books/${bookId}/kobo`, { method: onKobo ? "PUT" : "DELETE" });
 }
 
 export type CastLinks = {

@@ -60,6 +60,7 @@ import {
   SlidersHorizontal,
   Star,
   Sun,
+  Tablet,
   Trash2,
   Type,
   UserPlus,
@@ -70,6 +71,7 @@ import {
   X
 } from "lucide-react";
 import { castControls, onCastSessionStarted, useAirPlay, useCast } from "./cast";
+import { KoboPanel } from "./Kobo";
 import {
   AuthRequiredError,
   addBookmark,
@@ -93,6 +95,7 @@ import {
   getPlatformOverview,
   getPreferences,
   getKindleSettings,
+  setBookOnKobo,
   getProfile,
   getReaderInfo,
   listActivity,
@@ -333,6 +336,7 @@ export function App() {
   const [profileLoading, setProfileLoading] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [koboOpen, setKoboOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [metadataBook, setMetadataBook] = useState<Book | null>(null);
   const [artworkBook, setArtworkBook] = useState<Book | null>(null);
@@ -1225,6 +1229,29 @@ export function App() {
     [handleError, readListIds]
   );
 
+  const setBookKoboState = useCallback((bookId: string, onKobo: boolean) => {
+    setBooks((current) => current.map((book) => (book.id === bookId ? { ...book, onKobo } : book)));
+  }, []);
+
+  const handleToggleKobo = useCallback(
+    async (book: Book) => {
+      try {
+        const next = !book.onKobo;
+        const result = await setBookOnKobo(book.id, next);
+        setBookKoboState(book.id, result.onKobo);
+        if (next && !result.linked) {
+          setMessage(`“${book.title}” will go to your Kobo once it's linked to shelf.`);
+          setKoboOpen(true);
+        } else {
+          setMessage(next ? `“${book.title}” will be on your Kobo after its next sync.` : `“${book.title}” will leave your Kobo after its next sync.`);
+        }
+      } catch (error) {
+        handleError(error, "Unable to update your Kobo");
+      }
+    },
+    [handleError, setBookKoboState]
+  );
+
   const handleProfileUsage = useCallback(async (mediaType: MediaType, seconds: number) => {
     try {
       const usage = await recordProfileUsage(mediaType, seconds);
@@ -1688,6 +1715,10 @@ export function App() {
             setUserMenuOpen(false);
             setSettingsOpen(true);
           }}
+          onOpenKobo={() => {
+            setUserMenuOpen(false);
+            setKoboOpen(true);
+          }}
           onManageUsers={() => {
             setUserMenuOpen(false);
             setUsersOpen(true);
@@ -1788,6 +1819,7 @@ export function App() {
             onGetArtwork={(book) => setArtworkBook(book)}
             onDeleteBook={(book) => void handleDeleteBook(book)}
             onSendToKindle={(book) => void handleOpenSendToKindle(book)}
+            onToggleKobo={(book) => void handleToggleKobo(book)}
             onDeleteBookmark={handleDeleteBookBookmark}
             onReviewSaved={() => void refreshProfile().catch(() => undefined)}
             onError={handleError}
@@ -1961,6 +1993,15 @@ export function App() {
           preferences={preferences}
           onPreferencesChange={updatePreferences}
           onClose={() => setSettingsOpen(false)}
+        />
+      ) : null}
+
+      {koboOpen ? (
+        <KoboPanel
+          books={books}
+          onBooksChange={setBookKoboState}
+          onClose={() => setKoboOpen(false)}
+          onError={(error, fallback) => handleError(error, fallback)}
         />
       ) : null}
 
@@ -2572,6 +2613,7 @@ function AccountMenu({
   onViewProfile,
   onChangePassword,
   onOpenSettings,
+  onOpenKobo,
   onManageUsers,
   onManageServer,
   onManageAccess,
@@ -2586,6 +2628,7 @@ function AccountMenu({
   onViewProfile: () => void;
   onChangePassword: () => void;
   onOpenSettings: () => void;
+  onOpenKobo: () => void;
   onManageUsers: () => void;
   onManageServer: () => void;
   onManageAccess: () => void;
@@ -2623,6 +2666,10 @@ function AccountMenu({
           <button type="button" onClick={onOpenSettings}>
             <SlidersHorizontal size={16} />
             <span>Settings</span>
+          </button>
+          <button type="button" onClick={onOpenKobo}>
+            <Tablet size={16} />
+            <span>Kobo e-reader</span>
           </button>
           <button type="button" onClick={onChangePassword}>
             <LockKeyhole size={16} />
@@ -6850,7 +6897,7 @@ function EpubReader({
   const [srcDoc, setSrcDoc] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const pendingPageIndexRef = useRef<number | "last" | null>(null);
+  const pendingPageIndexRef = useRef<number | "last" | { fraction: number } | null>(null);
   const pageIndexRef = useRef(0);
   const sectionPageCountRef = useRef(1);
   const visiblePageCountRef = useRef(1);
@@ -6887,7 +6934,7 @@ function EpubReader({
         setPageIndex(initialLocation.pageIndex);
         setSectionPageCount(1);
         setVisiblePageCount(1);
-        pendingPageIndexRef.current = initialLocation.pageIndex;
+        pendingPageIndexRef.current = initialLocation.fraction !== null ? { fraction: initialLocation.fraction } : initialLocation.pageIndex;
         return renderEpubSection(loaded.zip, loaded.sections[initialLocation.sectionIndex], preferences, objectUrlsRef);
       })
       .then((html) => {
@@ -7077,7 +7124,9 @@ function EpubReader({
           ? metrics.pageCount - 1
           : typeof pendingPage === "number"
             ? pendingPage
-            : pageIndexRef.current;
+            : pendingPage
+              ? Math.floor(pendingPage.fraction * metrics.pageCount)
+              : pageIndexRef.current;
       const nextPage = Math.floor(clamp(desiredPage, 0, metrics.pageCount - 1));
 
       setSectionPageCount(metrics.pageCount);
@@ -7560,14 +7609,17 @@ function resolveZipPath(base: string, href: string) {
   return stack.join("/");
 }
 
+// A Kobo sync saves a spot as a fraction of the section (section:N:fraction:F), since its pages differ from shelf's.
 function epubLocationFromLocator(locator: string | null | undefined, sectionCount: number) {
-  const match = /^section:(\d+)(?::page:(\d+))?$/.exec(locator || "");
+  const match = /^section:(\d+)(?::(page|fraction):(\d+(?:\.\d+)?))?$/.exec(locator || "");
   if (!match || sectionCount <= 0) {
-    return { sectionIndex: 0, pageIndex: 0 };
+    return { sectionIndex: 0, pageIndex: 0, fraction: null };
   }
+  const fraction = match[2] === "fraction" ? clamp(Number(match[3]), 0, 0.9999) : null;
   return {
     sectionIndex: Math.min(sectionCount - 1, Math.max(0, Number(match[1]))),
-    pageIndex: Math.max(0, Number(match[2] || 0))
+    pageIndex: fraction === null ? Math.max(0, Math.floor(Number(match[3] || 0))) : 0,
+    fraction
   };
 }
 
