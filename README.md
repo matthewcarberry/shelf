@@ -16,7 +16,7 @@ Native iOS and Android clients now live in [`mobile/`](mobile/README.md). They a
 - Multi-server accounts: one Shelf account can own or join multiple independent servers, switch among them in the web and mobile clients, and connect with short-lived server-scoped tickets.
 - First-class libraries: each server can expose separate Books, Audiobooks, or mixed libraries and grant each invited member access only to selected libraries.
 - Profiles: each user has reading/listening completion totals, active-time hours, history, ratings and reviews, notes and highlights, and a persistent Read List.
-- Send to Kindle: every EPUB can be emailed to a user's saved `@kindle.com` address through the configured Shelf SMTP account.
+- Send to Kindle: EPUB and PDF books (and books Shelf has converted to EPUB) can be emailed to the `@kindle.com` address each user saves in Settings, through the configured Shelf SMTP account. Add the `EMAIL_FROM` address to Amazon's Approved Personal Document Email List. `KINDLE_MAX_ATTACHMENT_MB` (default 25) is the largest email your SMTP provider accepts; Shelf allows books up to about 73% of it to leave room for attachment encoding.
 - Global light, dark, and high-contrast display themes saved per user.
 
 DRM-protected books cannot be read or converted by this app.
@@ -164,7 +164,7 @@ Every EPUB title has a prominent **Send to Kindle** action on its library card a
 
 Before sending, add the address configured in `EMAIL_FROM` to Amazon's **Approved Personal Document Email List** under Manage Your Content and Devices. Amazon rejects documents from unapproved senders. Shelf reports when the SMTP server accepts a message, but final conversion and device delivery are handled by Amazon and can take additional time.
 
-Send to Kindle uses the same `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `EMAIL_FROM` settings as registration notifications. `KINDLE_MAX_ATTACHMENT_MB` prevents oversized EPUBs from being submitted to the SMTP provider; adjust it only when the provider supports a larger message size. This action is intentionally limited to original EPUB files and is not shown for PDFs, converted reading copies, or audiobooks.
+Send to Kindle uses the same `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `EMAIL_FROM` settings as registration notifications. `KINDLE_MAX_ATTACHMENT_MB` is the largest email the SMTP provider accepts (Gmail and Outlook allow 25 MB; Amazon accepts up to 50 MB, which Shelf never exceeds). Because attachments grow by about a third when encoded, the largest book Shelf sends is about 18 MB at the default. Each user saves their `@kindle.com` address in Settings, which also shows the From address to approve with Amazon. EPUB and PDF files are sent as they are; other formats are sent as Shelf's converted EPUB once it exists. Audiobooks are never sent.
 
 ## Users, Progress, Ratings, And Reviews
 

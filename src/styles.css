@@ -5941,3 +5941,10 @@ button.book-details-mark:focus-visible {
 .library-scan-options .library-scan-warning {
   color: var(--danger, #b42318);
 }
+
+.kindle-settings-section {
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
