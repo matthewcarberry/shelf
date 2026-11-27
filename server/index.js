@@ -32,6 +32,7 @@ import { ActivityTracker } from "./activity.js";
 import { PlatformService } from "./platform.js";
 import { downloadOpenLibraryCover, searchOpenLibraryArtwork } from "./artwork.js";
 import { createCastLinks } from "./cast.js";
+import { createKepubConverter, createKoboRouter, isKoboCompatible, requestOrigin } from "./kobo.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -106,6 +107,21 @@ const app = express();
 if (process.env.TRUST_PROXY === "true") {
   app.set("trust proxy", true);
 }
+// Kobo sync: the Kobo calls these with the token in its sync link instead of a sign-in.
+const kepub = createKepubConverter(paths.dataDir);
+app.use("/kobo/:token", createKoboRouter({
+  store,
+  kepub,
+  publicUrl: process.env.PUBLIC_URL || "",
+  storeUrl: process.env.KOBO_STORE_URL || undefined,
+  storeProxy: parseBoolean(process.env.KOBO_STORE_PROXY, true),
+  resolveUser: (userId) => {
+    const user = castLinkUser(userId);
+    return user && platform.getMembership(serverIdentity.serverId, user.id) ? user : null;
+  },
+  canAccessBook: (userId, bookId) => platform.canAccessBook(userId, bookId)
+}));
+
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: false, limit: "16kb" }));
 
@@ -842,6 +858,74 @@ app.post("/api/books/:bookId/send-to-kindle", async (req, res, next) => {
   }
 });
 
+app.get("/api/kobo", async (req, res, next) => {
+  try {
+    res.json(await koboOverview(req));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// A new sync link for this reader's Kobo. The token is only shown in this response.
+app.post("/api/kobo/links", async (req, res, next) => {
+  try {
+    const created = await store.createKoboToken(req.user.id);
+    res.status(201).json({
+      ...(await koboOverview(req)),
+      created: { id: created.id, createdAt: created.createdAt, syncUrl: `${requestOrigin(req, process.env.PUBLIC_URL || "")}/kobo/${created.token}` }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/kobo/links/:linkId", async (req, res, next) => {
+  try {
+    if (!(await store.deleteKoboToken(req.user.id, req.params.linkId))) {
+      res.status(404).json({ error: "Kobo link not found" });
+      return;
+    }
+    res.json(await koboOverview(req));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/books/:bookId/kobo", async (req, res, next) => {
+  try {
+    const book = store.getBook(req.params.bookId);
+    if (!isKoboCompatible(book)) {
+      res.status(415).json({ error: "Only EPUB books can be sent to a Kobo" });
+      return;
+    }
+    await store.setOnKobo(req.user.id, book.id, true);
+    // Make the Kobo copy now so the device's next sync doesn't wait for it.
+    void kepub.fileFor(book).catch((error) => console.warn(`Kobo: ${error.message}`));
+    res.json({ onKobo: true, linked: store.listKoboTokens(req.user.id).length > 0 });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/books/:bookId/kobo", async (req, res, next) => {
+  try {
+    await store.setOnKobo(req.user.id, req.params.bookId, false);
+    res.json({ onKobo: false, linked: store.listKoboTokens(req.user.id).length > 0 });
+  } catch (error) {
+    next(error);
+  }
+});
+
+async function koboOverview(req) {
+  return {
+    links: store.listKoboTokens(req.user.id),
+    kepub: await kepub.isAvailable(),
+    bookIds: store.listKoboBooks(req.user.id)
+      .filter((row) => platform.canAccessBook(req.user.id, row.bookId))
+      .map((row) => row.bookId)
+  };
+}
+
 app.post("/api/library/scan", requireAdmin, async (req, res, next) => {
   try {
     // With a library, only that library's folder is scanned.
@@ -1391,6 +1475,7 @@ app.use((error, _req, res, _next) => {
 function decoratePlatformBook(book, userId) {
   return {
     ...decorateBook(store, book, userId),
+    onKobo: store.isOnKobo(userId, book.id),
     serverId: serverIdentity.serverId,
     libraryIds: platform.getBookLibraryIds(book.id)
   };

@@ -37,7 +37,7 @@ const EMPTY_DB = {
 
 const SQLITE_FILENAME = "shelfstream.sqlite";
 const LEGACY_BACKUP_SUFFIX = ".pre-sqlite-backup";
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 7;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -298,6 +298,9 @@ export class SqliteStore {
     await this.queueSqliteWrite((sqlite) => {
       sqlite.prepare("DELETE FROM profile_usage WHERE user_id = ?").run(userId);
       sqlite.prepare("DELETE FROM read_list WHERE user_id = ?").run(userId);
+      sqlite.prepare("DELETE FROM kobo_tokens WHERE user_id = ?").run(userId);
+      sqlite.prepare("DELETE FROM kobo_books WHERE user_id = ?").run(userId);
+      sqlite.prepare("DELETE FROM kobo_reading_state WHERE user_id = ?").run(userId);
     });
     return true;
   }
@@ -590,6 +593,109 @@ export class SqliteStore {
     return removed;
   }
 
+  listKoboTokens(userId) {
+    return this.requireSqlite().prepare(`
+      SELECT id, created_at, last_used_at FROM kobo_tokens WHERE user_id = ? ORDER BY created_at DESC
+    `).all(userId).map((row) => ({ id: row.id, createdAt: row.created_at, lastUsedAt: row.last_used_at || null }));
+  }
+
+  // Only a hash of the token is kept; the token itself is shown once, when the link is made.
+  async createKoboToken(userId) {
+    const token = crypto.randomBytes(20).toString("hex");
+    const record = { id: nanoid(10), createdAt: new Date().toISOString(), lastUsedAt: null };
+    await this.queueSqliteWrite((sqlite) => {
+      sqlite.prepare("INSERT INTO kobo_tokens (id, token_hash, user_id, created_at) VALUES (?, ?, ?, ?)")
+        .run(record.id, hashKoboToken(token), userId, record.createdAt);
+    });
+    return { ...record, token };
+  }
+
+  async deleteKoboToken(userId, tokenId) {
+    let removed = false;
+    await this.queueSqliteWrite((sqlite) => {
+      removed = sqlite.prepare("DELETE FROM kobo_tokens WHERE id = ? AND user_id = ?").run(tokenId, userId).changes > 0;
+    });
+    return removed;
+  }
+
+  findKoboToken(token) {
+    if (!/^[a-f0-9]{40}$/.test(String(token || ""))) {
+      return null;
+    }
+    const row = this.requireSqlite().prepare("SELECT id, user_id, last_used_at FROM kobo_tokens WHERE token_hash = ?")
+      .get(hashKoboToken(token));
+    return row ? { id: row.id, userId: row.user_id, lastUsedAt: row.last_used_at || null } : null;
+  }
+
+  async touchKoboToken(tokenId) {
+    await this.queueSqliteWrite((sqlite) => {
+      sqlite.prepare("UPDATE kobo_tokens SET last_used_at = ? WHERE id = ?").run(new Date().toISOString(), tokenId);
+    });
+  }
+
+  listKoboBooks(userId, { includeRemoved = false } = {}) {
+    return this.requireSqlite().prepare(`
+      SELECT book_id, added_at, updated_at, removed_at FROM kobo_books
+      WHERE user_id = ? ${includeRemoved ? "" : "AND removed_at IS NULL"}
+      ORDER BY added_at DESC
+    `).all(userId).map((row) => ({
+      bookId: row.book_id,
+      addedAt: row.added_at,
+      updatedAt: row.updated_at,
+      removedAt: row.removed_at || null
+    }));
+  }
+
+  isOnKobo(userId, bookId) {
+    return Boolean(this.requireSqlite().prepare(
+      "SELECT 1 FROM kobo_books WHERE user_id = ? AND book_id = ? AND removed_at IS NULL"
+    ).get(userId, bookId));
+  }
+
+  // Removed books stay as rows so the next sync can tell the Kobo to drop them.
+  async setOnKobo(userId, bookId, onKobo) {
+    const now = new Date().toISOString();
+    await this.queueSqliteWrite((sqlite) => {
+      if (onKobo) {
+        sqlite.prepare(`
+          INSERT INTO kobo_books (user_id, book_id, added_at, updated_at, removed_at) VALUES (?, ?, ?, ?, NULL)
+          ON CONFLICT(user_id, book_id) DO UPDATE SET
+            added_at = CASE WHEN kobo_books.removed_at IS NULL THEN kobo_books.added_at ELSE excluded.added_at END,
+            updated_at = CASE WHEN kobo_books.removed_at IS NULL THEN kobo_books.updated_at ELSE excluded.updated_at END,
+            removed_at = NULL
+        `).run(userId, bookId, now, now);
+      } else {
+        sqlite.prepare(`
+          UPDATE kobo_books SET removed_at = ?, updated_at = ? WHERE user_id = ? AND book_id = ? AND removed_at IS NULL
+        `).run(now, now, userId, bookId);
+      }
+    });
+  }
+
+  getKoboReadingState(userId, bookId) {
+    const row = this.requireSqlite().prepare(
+      "SELECT data_json FROM kobo_reading_state WHERE user_id = ? AND book_id = ?"
+    ).get(userId, bookId);
+    return row ? parseStoredJson(row.data_json, "Kobo reading state") : null;
+  }
+
+  async setKoboReadingState(userId, bookId, state) {
+    const updatedAt = new Date().toISOString();
+    await this.queueSqliteWrite((sqlite) => {
+      sqlite.prepare(`
+        INSERT INTO kobo_reading_state (user_id, book_id, data_json, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, book_id) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at
+      `).run(userId, bookId, JSON.stringify(state), updatedAt);
+    });
+  }
+
+  requireSqlite() {
+    if (!this.sqlite) {
+      throw new Error("Shelf SQLite store is not initialized");
+    }
+    return this.sqlite;
+  }
+
   getPreferences(userId) {
     const stored = this.db.preferences[userId] || {};
     return {
@@ -685,6 +791,10 @@ export class SqliteStore {
     };
     await this.save();
   }
+}
+
+function hashKoboToken(token) {
+  return crypto.createHash("sha256").update(String(token)).digest("hex");
 }
 
 function configureSqlite(sqlite) {
@@ -921,6 +1031,35 @@ function applySchemaMigrations(sqlite) {
       version: 6,
       sql: `
         DROP TABLE IF EXISTS libby_accounts;
+      `
+    },
+    {
+      // Kobo sync: per-user device links, the books each user sends to their Kobo, and the Kobo's reading state.
+      version: 7,
+      sql: `
+        CREATE TABLE kobo_tokens (
+          id TEXT PRIMARY KEY,
+          token_hash TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT
+        );
+        CREATE INDEX kobo_tokens_user_idx ON kobo_tokens (user_id);
+        CREATE TABLE kobo_books (
+          user_id TEXT NOT NULL,
+          book_id TEXT NOT NULL,
+          added_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          removed_at TEXT,
+          PRIMARY KEY (user_id, book_id)
+        );
+        CREATE TABLE kobo_reading_state (
+          user_id TEXT NOT NULL,
+          book_id TEXT NOT NULL,
+          data_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, book_id)
+        );
       `
     }
   ];

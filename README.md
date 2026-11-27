@@ -16,6 +16,7 @@ Native iOS and Android clients now live in [`mobile/`](mobile/README.md). They a
 - Multi-server accounts: one Shelf account can own or join multiple independent servers, switch among them in the web and mobile clients, and connect with short-lived server-scoped tickets.
 - First-class libraries: each server can expose separate Books, Audiobooks, or mixed libraries and grant each invited member access only to selected libraries.
 - Profiles: each user has reading/listening completion totals, active-time hours, history, ratings and reviews, notes and highlights, and a persistent Read List.
+- Kobo sync: readers send EPUBs to their Kobo, which downloads them on its next sync; reading progress syncs both ways.
 - Send to Kindle: every EPUB can be emailed to a user's saved `@kindle.com` address through the configured Shelf SMTP account.
 - Global light, dark, and high-contrast display themes saved per user.
 
@@ -165,6 +166,15 @@ Every EPUB title has a prominent **Send to Kindle** action on its library card a
 Before sending, add the address configured in `EMAIL_FROM` to Amazon's **Approved Personal Document Email List** under Manage Your Content and Devices. Amazon rejects documents from unapproved senders. Shelf reports when the SMTP server accepts a message, but final conversion and device delivery are handled by Amazon and can take additional time.
 
 Send to Kindle uses the same `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `EMAIL_FROM` settings as registration notifications. `KINDLE_MAX_ATTACHMENT_MB` prevents oversized EPUBs from being submitted to the SMTP provider; adjust it only when the provider supports a larger message size. This action is intentionally limited to original EPUB files and is not shown for PDFs, converted reading copies, or audiobooks.
+
+## Kobo Sync
+
+Shelf can act as a Kobo's sync server, like Calibre-Web and Komga do. Each reader opens **Kobo e-reader** from their account menu, makes a sync link, and puts it in the Kobo's `.kobo/Kobo/Kobo eReader.conf` as `api_endpoint=<link>` under `[OneStoreServices]`. Books they mark **Send to Kobo** on a book's page download on the Kobo's next sync, and books they take off (in shelf or with Remove on the Kobo) leave it.
+
+- Reading position syncs both ways. The Kobo's position opens the web reader at the same chapter; reading into another chapter in shelf moves the Kobo there on its next sync.
+- Everything else the Kobo asks for is passed on to the real Kobo store (`https://storeapi.kobo.com`), so its store, account and purchases keep working. Set `KOBO_STORE_PROXY=false` to stop that.
+- The Docker image includes [kepubify](https://github.com/pgaskin/kepubify), which turns EPUBs into Kobo kepubs (cached under `DATA_DIR/kobo-kepub`). Without it, books go as plain EPUBs.
+- The Kobo needs to reach the address in the link. A LAN address such as `http://192.168.1.10:9191/kobo/<token>` works on home Wi-Fi.
 
 ## Users, Progress, Ratings, And Reviews
 

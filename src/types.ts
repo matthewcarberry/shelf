@@ -53,6 +53,7 @@ export interface Book extends EditableBookMetadata {
   updatedAt: string;
   error: string | null;
   progress: ProgressState | null;
+  onKobo?: boolean;
 }
 
 export interface ArtworkCandidate {
@@ -116,6 +117,19 @@ export interface ReaderPreferences {
     pageInBook: boolean;
     bookTime: boolean;
   };
+}
+
+export interface KoboLink {
+  id: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface KoboOverview {
+  links: KoboLink[];
+  kepub: boolean;
+  bookIds: string[];
+  created?: { id: string; createdAt: string; syncUrl: string };
 }
 
 export interface KindleSettings {

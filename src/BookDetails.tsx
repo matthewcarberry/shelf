@@ -12,10 +12,12 @@ import {
   Play,
   Send,
   Share2,
+  Tablet,
   Trash2,
   WifiOff
 } from "lucide-react";
 import { getReaderInfo, saveReview } from "./api";
+import { isKoboCompatible } from "./Kobo";
 import {
   BookCover,
   ReviewPanel,
@@ -69,6 +71,7 @@ export function BookDetailsView({
   onGetArtwork,
   onDeleteBook,
   onSendToKindle,
+  onToggleKobo,
   onDeleteBookmark,
   onReviewSaved,
   onError
@@ -90,6 +93,7 @@ export function BookDetailsView({
   onGetArtwork: (book: Book) => void;
   onDeleteBook: (book: Book) => void;
   onSendToKindle: (book: Book) => void;
+  onToggleKobo: (book: Book) => void;
   onDeleteBookmark: (bookId: string, bookmark: Bookmark) => Promise<void>;
   onReviewSaved: () => void;
   onError: (error: unknown, fallback: string) => void;
@@ -344,6 +348,18 @@ export function BookDetailsView({
               <button type="button" className="book-details-action" onClick={() => onSendToKindle(book)}>
                 <Send size={17} />
                 Send to Kindle
+              </button>
+            ) : null}
+            {isKoboCompatible(book) ? (
+              <button
+                type="button"
+                className={`book-details-action ${book.onKobo ? "is-active" : ""}`}
+                aria-pressed={Boolean(book.onKobo)}
+                title={book.onKobo ? "Take this book off your Kobo" : "Send this book to your Kobo"}
+                onClick={() => onToggleKobo(book)}
+              >
+                {book.onKobo ? <Check size={17} /> : <Tablet size={17} />}
+                {book.onKobo ? "On your Kobo" : "Send to Kobo"}
               </button>
             ) : null}
             {canManageBook ? (
